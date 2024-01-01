@@ -645,11 +645,16 @@ void platform_psftp_pre_conn_setup(LogPolicy *lp)
 /* ----------------------------------------------------------------------
  * Main program. Parse arguments etc.
  */
+#if defined(__MINGW32__) || defined(__MINGW64__)
+int _xmain(int argc, char *argv[])
+#else
 int main(int argc, char *argv[])
+#endif
 {
     int ret;
 
     dll_hijacking_protection();
+    init_winver();
 
     process_ini_option(&argc, &argv, 1, cmdline_error);
 
@@ -657,3 +662,13 @@ int main(int argc, char *argv[])
 
     return ret;
 }
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
+int WINAPI
+WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+	LPSTR lpCmdLine, int nShowCmd)
+{
+    return _xmain(__argc, __argv);
+}
+#endif
+

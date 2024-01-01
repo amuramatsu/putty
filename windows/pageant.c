@@ -891,8 +891,10 @@ int accept_agent_request(int type, const RSAKey *rsaKey, const ssh2_userkey *ssh
     return result;
 }
 
+#if !defined(__MINGW32__) && !defined(__MINGW64__)
 #if _WIN32_WINNT < 0x0602 /* not exactly sure from which version it is defined */
 const GUID GUID_SESSION_DISPLAY_STATUS = { 0x2b84c20e, 0xad23, 0x4ddf,{ 0x93, 0xdb, 0x5, 0xff, 0xbd, 0x7e, 0xfc, 0xa5 } };
+#endif
 #endif
 
 static char *parse_reencrypt_settings(const char *_cfg)

@@ -297,6 +297,7 @@ int main(int argc, char **argv)
     const struct BackendVtable *vt;
 
     dll_hijacking_protection();
+    init_winver();
 
     /*
      * Initialise port and protocol to sensible defaults. (These

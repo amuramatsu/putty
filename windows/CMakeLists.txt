@@ -91,13 +91,13 @@ set_target_properties(pageant PROPERTIES
   LINK_FLAGS "${LFLAG_MANIFEST_NO}")
 installed_program(pageant)
 
-add_sources_from_current_dir(plink no-jump-list.c nohelp.c plink.rc)
+add_sources_from_current_dir(plink no-jump-list.c utils/version.c nohelp.c plink.rc)
 add_dependencies(plink generated_licence_h)
 
-add_sources_from_current_dir(pscp no-jump-list.c nohelp.c pscp.rc)
+add_sources_from_current_dir(pscp no-jump-list.c utils/version.c nohelp.c pscp.rc)
 add_dependencies(pscp generated_licence_h)
 
-add_sources_from_current_dir(psftp no-jump-list.c nohelp.c psftp.rc)
+add_sources_from_current_dir(psftp no-jump-list.c utils/version.c nohelp.c psftp.rc)
 add_dependencies(psftp generated_licence_h)
 
 add_sources_from_current_dir(psocks nohelp.c)
