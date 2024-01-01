@@ -1021,7 +1021,8 @@ SeatPromptResult verify_ssh_host_key(
      * we can't present interactive prompts. */
     seat_dialog_text_append(
         text, SDT_BATCH_ABORT, "Connection abandoned.");
-    char pds_trans_buf[128], pds_trans_buf2[128], *pds_str, *pds_str2;
+    char pds_trans_buf[128], pds_trans_buf2[128];
+    const char *pds_str, *pds_str2;
 
     if (storage_status == 1) {
         pds_str = l10n_translate(pds->hk_accept_action, pds_trans_buf);

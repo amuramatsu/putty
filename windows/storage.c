@@ -557,12 +557,12 @@ host_ca *host_ca_load(const char *name)
 
         if ((s = get_ini_sz(section, "PublicKey", inifile)) != NULL)
             hca->ca_public_key = base64_decode_sb(ptrlen_from_asciz(s));
-        sfree(s);
+        sfree((void *)s);
 
         if ((s = get_ini_sz(section, "Validity", inifile)) != NULL) {
             hca->validity_expression = strbuf_to_str(
                 percent_decode_sb(ptrlen_from_asciz(s)));
-            sfree(s);
+            sfree((void *)s);
         } else if ((sb = get_ini_multi_sz(section, "MatchHosts", inifile)) != NULL) {
             host_ca_load_match_hosts(sb, hca);
             strbuf_free(sb);
@@ -594,12 +594,12 @@ host_ca *host_ca_load(const char *name)
 
     if ((s = get_reg_sz(rkey, "PublicKey")) != NULL)
         hca->ca_public_key = base64_decode_sb(ptrlen_from_asciz(s));
-    sfree(s);
+    sfree((void *)s);
 
     if ((s = get_reg_sz(rkey, "Validity")) != NULL) {
         hca->validity_expression = strbuf_to_str(
             percent_decode_sb(ptrlen_from_asciz(s)));
-        sfree(s);
+        sfree((void *)s);
     } else if ((sb = get_reg_multi_sz(rkey, "MatchHosts")) != NULL) {
         host_ca_load_match_hosts(sb, hca);
         strbuf_free(sb);

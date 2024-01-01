@@ -122,7 +122,7 @@ int strtranslate(const WCHAR *str, WCHAR *out_buf, int out_size)
     return len;
 }
 
-WCHAR *strtranslatefb(const WCHAR *str, WCHAR *out_buf, int out_size)
+const WCHAR *strtranslatefb(const WCHAR *str, WCHAR *out_buf, int out_size)
 {
     int result = strtranslate(str, out_buf, out_size);
     return result ? out_buf : str;
@@ -454,13 +454,13 @@ static int getEnabled()
                 if (!load_ini_wsz(L"Default", L"CanonicalName", cname, lenof(cname), lng_path)
                         || *lng_section == L'\0'
                         || !(cname_path = resolve_cname_path(cname, lng_path))) {
-                    sfree(lng_path);
+                    sfree((void *)lng_path);
                     lng_path = NULL;
                 } else {
-                    sfree(lng_path);
+                    sfree((void *)lng_path);
                     lng_path = cname_path;
                     if (!load_ini_wsz(L"Default", L"Language", lng_section, lenof(lng_section), lng_path) && *lng_section == L'\0') {
-                        sfree(lng_path);
+                        sfree((void *)lng_path);
                         lng_path = NULL;
                     }
                 }

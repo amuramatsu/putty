@@ -3016,7 +3016,7 @@ void iso2022_settranschar (struct iso2022_data *this, int value);
 void iso2022_tbufclear (struct iso2022_data *this);
 int iso2022_tbuflen (struct iso2022_data *this);
 int iso2022_buflen (struct iso2022_data *this);
-void iso2022_autodetect_put (struct iso2022_data *this, unsigned char *buf,
+void iso2022_autodetect_put (struct iso2022_data *this, const unsigned char *buf,
                              int nchars);
 
 /*

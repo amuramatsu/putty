@@ -168,9 +168,9 @@ void enum_ini_section_finish(ini_sections *e)
     sfree(e);
 }
 
-static size_t strspn_table(char *str, const char *tab)
+static size_t strspn_table(const char *str, const char *tab)
 {
-    char *p = str;
+    const char *p = str;
     while (*p) {
         if (!tab[*(unsigned char *)p]) {
             break;

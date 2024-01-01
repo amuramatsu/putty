@@ -257,9 +257,9 @@ static strbuf *makeblob2base(ssh_key *key)
     return blob;
 }
 
-static PageantPrivateKey *pub_to_priv(PageantPublicKey *pub)
+static PageantPrivateKey *pub_to_priv(const PageantPublicKey *pub)
 {
-    PageantPrivateKey *priv = find234(privkeytree, &pub->sort.priv, NULL);
+    PageantPrivateKey *priv = find234(privkeytree, (void *)&pub->sort.priv, NULL);
     assert(priv && "Public and private trees out of sync!");
     return priv;
 }
@@ -352,7 +352,7 @@ int accept_agent_request_pk_pub(int type, const PageantPublicKey *pub)
         return 1;
     }
     ssh2_userkey priv_ukey;
-    priv_ukey.key = priv_key;
+    priv_ukey.key = (ssh_key *)priv_key;
     priv_ukey.comment = pub->comment;
     return accept_agent_request(type, rsa_key, &priv_ukey);
 }

@@ -11,7 +11,7 @@
 #include "storage.h"
 #include "winwallp.h"
 
-static void wallpaper_dropdown_handler(dlgcontrol *ctrl, void *dlg, void *data, int event);
+static void wallpaper_dropdown_handler(dlgcontrol *ctrl, dlgparam *dlg, void *data, int event);
 
 static void about_handler(dlgcontrol *ctrl, dlgparam *dlg,
                           void *data, int event)
@@ -473,7 +473,7 @@ typedef struct {
     int val;
 } DropdownItem;
 
-static void wallpaper_dropdown_handler(dlgcontrol *ctrl, void *dlg, void *data, int event)
+static void wallpaper_dropdown_handler(dlgcontrol *ctrl, dlgparam *dlg, void *data, int event)
 {
     static const DropdownItem align_items[] = {
         {"Center", WALLPAPER_ALIGN_CENTER | WALLPAPER_ALIGN_MIDDLE},

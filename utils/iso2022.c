@@ -1339,7 +1339,7 @@ autodetect_jp_utf8cjk (struct iso2022_autodetect_jp *p, unsigned char c)
 }
 
 static void
-autodetect_jp (struct iso2022_data *this, unsigned char *buf, int nchars)
+autodetect_jp (struct iso2022_data *this, const unsigned char *buf, int nchars)
 {
   struct {
     int good;
@@ -1466,7 +1466,7 @@ iso2022_put (struct iso2022_data *this, unsigned char c)
 }
 
 void
-iso2022_autodetect_put (struct iso2022_data *this, unsigned char *buf,
+iso2022_autodetect_put (struct iso2022_data *this, const unsigned char *buf,
                         int nchars)
 {
   if (this->autodetect.n)
