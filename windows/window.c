@@ -27,7 +27,7 @@
 #include <multimon.h>
 #endif
 
-#include <imm.h>
+#include "ime_wrap.h"
 #include <commctrl.h>
 #include <richedit.h>
 #include <mmsystem.h>
@@ -957,6 +957,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     init_help();
 
     init_winfuncs();
+    if(! ime_wrap_init()) {
+        char *str = dupprintf("%s Fatal Error", appname);
+        MessageBox(NULL, "Failed to initialize ime_wrap",
+                   str, MB_OK | MB_ICONEXCLAMATION);
+        sfree(str);
+        return 1;
+    }
 
     conf = conf_new();
 
@@ -1421,6 +1428,7 @@ void cleanup_exit(int code)
     /*
      * Clean up.
      */
+    ime_wrap_term();
     deinit_fonts();
     sfree(logpal);
     if (pal)

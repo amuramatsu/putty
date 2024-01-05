@@ -104,6 +104,7 @@ add_sources_from_current_dir(psocks nohelp.c)
 
 add_executable(putty
   window.c
+  ime_wrap.c
   putty.c
   help.c
   putty.rc)
@@ -123,6 +124,7 @@ target_compile_definitions(putty PRIVATE PUTTY_WITH_SSH)
 
 add_executable(puttytel
   window.c
+  ime_wrap.c
   putty.c
   help.c
   ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
@@ -166,6 +168,7 @@ installed_program(puttygen)
 if(HAVE_CONPTY)
   add_executable(pterm
     window.c
+    ime_wrap.c
     pterm.c
     help.c
     conpty.c
