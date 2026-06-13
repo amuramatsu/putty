@@ -63,11 +63,11 @@ struct node234_Tag {
  */
 tree234 *newtree234(cmpfn234 cmp)
 {
-    tree234 *ret = snew(tree234);
-    LOG(("created tree %p\n", ret));
-    ret->root = NULL;
-    ret->cmp = cmp;
-    return ret;
+    tree234 *t = snew(tree234);
+    LOG(("created tree %p\n", t));
+    t->root = NULL;
+    t->cmp = cmp;
+    return t;
 }
 
 /*
@@ -1361,7 +1361,13 @@ int mycmp(void *av, void *bv)
     return strcmp(a, b);
 }
 
-#define lenof(x) ( sizeof((x)) / sizeof(*(x)) )
+#ifndef lenof
+#if HAVE_COUNTOF
+#define lenof(x) _Countof(x)
+#else
+#define lenof(x) ( (sizeof((x))) / (sizeof(*(x))))
+#endif
+#endif
 
 char *strings[] = {
     "a", "ab", "absque", "coram", "de",
@@ -1398,7 +1404,8 @@ void findtest(void)
 
             lo = 0;
             hi = arraylen - 1;
-            while (lo <= hi) {
+            assert(lo <= hi);
+            do {
                 mid = (lo + hi) / 2;
                 c = strcmp(p, array[mid]);
                 if (c < 0)
@@ -1407,7 +1414,7 @@ void findtest(void)
                     lo = mid + 1;
                 else
                     break;
-            }
+            } while (lo <= hi);
 
             if (c == 0) {
                 if (rel == REL234_LT)
@@ -1428,10 +1435,11 @@ void findtest(void)
                     ret = NULL;
             }
 
+            index = -1;
             realret = findrelpos234(tree, p, NULL, rel, &index);
             if (realret != ret) {
                 error("find(\"%s\",%s) gave %s should be %s",
-                      p, relnames[j], realret, ret);
+                      p, relnames[j], realret ? realret : "NULL", ret);
             }
             if (realret && index != mid) {
                 error("find(\"%s\",%s) gave %d should be %d",

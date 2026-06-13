@@ -17,6 +17,7 @@ void nullseat_notify_session_started(Seat *seat) {}
 void nullseat_notify_remote_exit(Seat *seat) {}
 void nullseat_notify_remote_disconnect(Seat *seat) {}
 void nullseat_connection_fatal(Seat *seat, const char *message) {}
+void nullseat_nonfatal(Seat *seat, const char *message) {}
 void nullseat_update_specials_menu(Seat *seat) {}
 char *nullseat_get_ttymode(Seat *seat, const char *mode) { return NULL; }
 void nullseat_set_busy_status(Seat *seat, BusyStatus status) {}
@@ -36,7 +37,8 @@ SeatPromptResult nullseat_confirm_weak_cached_hostkey(
 bool nullseat_is_never_utf8(Seat *seat) { return false; }
 bool nullseat_is_always_utf8(Seat *seat) { return true; }
 void nullseat_echoedit_update(Seat *seat, bool echoing, bool editing) {}
-const char *nullseat_get_x_display(Seat *seat) { return NULL; }
+const char *nullseat_get_display(Seat *seat, SeatDisplayType dtype)
+{ return NULL; }
 bool nullseat_get_windowid(Seat *seat, long *id_out) { return false; }
 bool nullseat_get_window_pixel_size(
     Seat *seat, int *width, int *height) { return false; }

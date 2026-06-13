@@ -20,9 +20,11 @@ add_sources_from_current_dir(crypto
   ecc-ssh.c
   hash_simple.c
   hmac.c
+  kex-hybrid.c
   mac.c
   mac_simple.c
   md5.c
+  mlkem.c
   mpint.c
   ntru.c
   openssh-certs.c
@@ -234,6 +236,19 @@ if(neon)
   endif()
 endif()
 
+test_compile_with_flags(HAVE_ARM_DIT
+  TEST_SOURCE "
+    #ifndef __aarch64__
+    #error make sure this only even tries to work on AArch64
+    #endif
+    #include <stdint.h>
+    int main(void) {
+      register uint64_t one asm(\"x8\");
+      one = 1;
+      asm volatile(\".inst 0xd51b42a8\" :: \"r\"(one));
+    }"
+  ADD_SOURCES_IF_SUCCESSFUL enable_dit.c)
+
 set(HAVE_AES_NI ${HAVE_AES_NI} PARENT_SCOPE)
 set(HAVE_SHA_NI ${HAVE_SHA_NI} PARENT_SCOPE)
 set(HAVE_SHAINTRIN_H ${HAVE_SHAINTRIN_H} PARENT_SCOPE)
@@ -241,3 +256,4 @@ set(HAVE_NEON_CRYPTO ${HAVE_NEON_CRYPTO} PARENT_SCOPE)
 set(HAVE_NEON_SHA512 ${HAVE_NEON_SHA512} PARENT_SCOPE)
 set(HAVE_NEON_SHA512_INTRINSICS ${HAVE_NEON_SHA512_INTRINSICS} PARENT_SCOPE)
 set(USE_ARM64_NEON_H ${USE_ARM64_NEON_H} PARENT_SCOPE)
+set(HAVE_ARM_DIT ${HAVE_ARM_DIT} PARENT_SCOPE)

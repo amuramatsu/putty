@@ -663,6 +663,7 @@ static void signop_unlink(PageantSignOp *so)
 static void signop_free(PageantAsyncOp *pao)
 {
     PageantSignOp *so = container_of(pao, PageantSignOp, pao);
+    signop_unlink(so);
     strbuf_free(so->data_to_sign);
     sfree(so);
 }
@@ -938,7 +939,7 @@ enum Extension { KNOWN_EXTENSIONS(DECL_EXT_ENUM) EXT_UNKNOWN };
 static const ptrlen extension_names[] = { KNOWN_EXTENSIONS(DEF_EXT_NAMES) };
 
 static PageantAsyncOp *pageant_make_op(
-    PageantClient *pc, PageantClientRequestId *reqid, ptrlen msgpl, bool isRemoteCall)
+    PageantClient *pc, PageantClientRequestId *reqid, ptrlen msgpl, bool is_remote_call)
 {
     BinarySource msg[1];
     strbuf *sb = strbuf_new_nm();
@@ -1052,7 +1053,7 @@ static PageantAsyncOp *pageant_make_op(
             fail("key not found");
             goto challenge1_cleanup;
         }
-        if (isRemoteCall && !accept_agent_request_pk_pub(type, pub)) {
+        if (is_remote_call && !accept_agent_request_pk_pub(type, pub)) {
             fail("user declined");
             goto challenge1_cleanup;
         }
@@ -1129,7 +1130,7 @@ static PageantAsyncOp *pageant_make_op(
         else
             pageant_client_log(pc, reqid, "no signature flags");
 
-        if (isRemoteCall && !accept_agent_request_pk_pub(type, pub)) {
+        if (is_remote_call && !accept_agent_request_pk_pub(type, pub)) {
             fail("user declined");
             goto responded;
         }
@@ -1173,7 +1174,7 @@ static PageantAsyncOp *pageant_make_op(
             fail("key is invalid");
             goto add1_cleanup;
         }
-        if (isRemoteCall && !accept_agent_request(type, key, NULL)) {
+        if (is_remote_call && !accept_agent_request(type, key, NULL)) {
             fail("user declined");
             goto add1_cleanup;
         }
@@ -1237,7 +1238,7 @@ static PageantAsyncOp *pageant_make_op(
             goto add2_cleanup;
         }
 
-        if (isRemoteCall && !accept_agent_request(type, NULL, key)) {
+        if (is_remote_call && !accept_agent_request(type, NULL, key)) {
             fail("user declined");
             goto add2_cleanup;
         }
@@ -1300,7 +1301,7 @@ static PageantAsyncOp *pageant_make_op(
 
         pub = findpubkey1(&reqkey);
         freersakey(&reqkey);
-        if (pub && isRemoteCall && !accept_agent_request_pk_pub(type, pub)) {
+        if (pub && is_remote_call && !accept_agent_request_pk_pub(type, pub)) {
             fail("user declined");
         } else if (pub) {
             pageant_client_log(pc, reqid, "found with comment: %s",
@@ -1365,7 +1366,7 @@ static PageantAsyncOp *pageant_make_op(
         pageant_client_log(pc, reqid,
                            "request: SSH1_AGENTC_REMOVE_ALL_RSA_IDENTITIES");
 
-        if (isRemoteCall && !accept_agent_request(type, NULL, NULL)) {
+        if (is_remote_call && !accept_agent_request(type, NULL, NULL)) {
             fail("user declined");
             goto responded;
         }
@@ -1384,7 +1385,7 @@ static PageantAsyncOp *pageant_make_op(
         pageant_client_log(pc, reqid,
                            "request: SSH2_AGENTC_REMOVE_ALL_IDENTITIES");
 
-        if (isRemoteCall && !accept_agent_request(type, NULL, NULL)) {
+        if (is_remote_call && !accept_agent_request(type, NULL, NULL)) {
             fail("user declined");
             goto responded;
         }
@@ -1540,7 +1541,7 @@ static PageantAsyncOp *pageant_make_op(
                 fail("key not found");
                 goto responded;
             }
-            if (isRemoteCall && !accept_agent_request_pk_pub(type, pub)) {
+            if (is_remote_call && !accept_agent_request_pk_pub(type, pub)) {
                 fail("user declined");
                 goto responded;
             }
@@ -1656,7 +1657,7 @@ static PageantAsyncOp *pageant_make_op(
 void pageant_handle_msg(PageantClient *pc, PageantClientRequestId *reqid,
                         ptrlen msgpl)
 {
-    PageantAsyncOp *pao = pageant_make_op(pc, reqid, msgpl, 1);
+    PageantAsyncOp *pao = pageant_make_op(pc, reqid, msgpl, true);
     queue_toplevel_callback(pageant_async_op_callback, pao);
 }
 
@@ -1730,7 +1731,7 @@ void pageant_reencrypt_all(void)
 #define crGetChar(c) do                                         \
     {                                                           \
         while (len == 0) {                                      \
-            *crLine =__LINE__; return; case __LINE__:;          \
+            *crLine = __LINE__; return; case __LINE__:;         \
         }                                                       \
         len--;                                                  \
         (c) = (unsigned char)*data++;                           \
@@ -1932,7 +1933,7 @@ static int pageant_listen_accepting(Plug *plug,
         plug, struct pageant_listen_state, plug);
     struct pageant_conn_state *pc;
     const char *err;
-    SocketPeerInfo *peerinfo;
+    SocketEndpointInfo *peerinfo;
 
     pc = snew(struct pageant_conn_state);
     pc->plug.vt = &pageant_connection_plugvt;
@@ -1961,7 +1962,7 @@ static int pageant_listen_accepting(Plug *plug,
         pageant_listener_client_log(pl->plc, "c#%"SIZEu": new connection",
                                     pc->conn_index);
     }
-    sk_free_peer_info(peerinfo);
+    sk_free_endpoint_info(peerinfo);
 
     pageant_register_client(&pc->pc);
 
@@ -2091,7 +2092,7 @@ static unsigned pageant_client_op_query(PageantClientOp *pco)
 
         assert(pco->buf->len > 4);
         PageantAsyncOp *pao = pageant_make_op(
-            &pic.pc, &reqid, make_ptrlen(pco->buf->s + 4, pco->buf->len - 4), 0);
+            &pic.pc, &reqid, make_ptrlen(pco->buf->s + 4, pco->buf->len - 4), false);
         while (!pic.got_response)
             pageant_async_op_coroutine(pao);
 
@@ -2720,14 +2721,14 @@ int pageant_sign(struct pageant_pubkey *key, ptrlen message, strbuf *out,
     }
 }
 
-struct pageant_pubkey *pageant_pubkey_copy(struct pageant_pubkey *key)
+struct pageant_pubkey *pageant_pubkey_copy(struct pageant_pubkey *orig)
 {
-    struct pageant_pubkey *ret = snew(struct pageant_pubkey);
-    ret->blob = strbuf_new();
-    put_data(ret->blob, key->blob->s, key->blob->len);
-    ret->comment = key->comment ? dupstr(key->comment) : NULL;
-    ret->ssh_version = key->ssh_version;
-    return ret;
+    struct pageant_pubkey *copy = snew(struct pageant_pubkey);
+    copy->blob = strbuf_new();
+    put_data(copy->blob, orig->blob->s, orig->blob->len);
+    copy->comment = orig->comment ? dupstr(orig->comment) : NULL;
+    copy->ssh_version = orig->ssh_version;
+    return copy;
 }
 
 void pageant_pubkey_free(struct pageant_pubkey *key)

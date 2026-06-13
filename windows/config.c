@@ -9,9 +9,14 @@
 #include "putty.h"
 #include "dialog.h"
 #include "storage.h"
+#include "win-gui-seat.h"
 #include "winwallp.h"
+#include "wtrans.h"
 
 static void wallpaper_dropdown_handler(dlgcontrol *ctrl, dlgparam *dlg, void *data, int event);
+static void conf_win_opacity_handler(dlgcontrol *ctrl, dlgparam *dlg, void *data, int event);
+
+#include "config-sample-text.h"
 
 static void about_handler(dlgcontrol *ctrl, dlgparam *dlg,
                           void *data, int event)
@@ -168,7 +173,7 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
         }
     }
     ctrl_filesel(s, "Custom sound file to play as a bell:", NO_SHORTCUT,
-                 FILTER_WAVE_FILES, false, "Select bell sound file",
+                 FILTER_SOUND_FILES, false, "Select bell sound file",
                  HELPCTX(bell_style),
                  conf_filesel_handler, I(CONF_bell_wavefile));
 
@@ -325,6 +330,7 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
                   HELPCTX(colours_system),
                   conf_checkbox_handler, I(CONF_system_colour));
 
+    sample_text_setup(b, hwndp, has_help, midsession, protocol);
 
     /*
      * Resize-by-changing-font is a Windows insanity.
@@ -354,6 +360,13 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
     ctrl_checkbox(s, "Window closes on ALT-F4", '4',
                   HELPCTX(behaviour_altf4),
                   conf_checkbox_handler, I(CONF_alt_f4));
+    ctrl_radiobuttons(s, "When Windows session ends:", 'd', 1,
+                      HELPCTX(behaviour_queryend),
+                      conf_radiobutton_handler,
+                      I(CONF_query_end),
+                      "Always close (even if session is active)", I(QUERY_END_YES),
+                      "Close only if session is inactive", I(QUERY_END_INACTIVE),
+                      "Always block (if terminal window exists)", I(QUERY_END_NO));
     ctrl_checkbox(s, "System menu appears on ALT-Space", 'y',
                   HELPCTX(behaviour_altspace),
                   conf_checkbox_handler, I(CONF_alt_space));
@@ -376,7 +389,6 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
                   conf_checkbox_handler, I(CONF_switch_skip_min));
     }
 
-        /* > transparent background patch */
     /*
      * The Window/Wallpaper panel.
      */
@@ -421,23 +433,31 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
         /* GDI+ is available by default on Windows XP+ */
         int has_gdip = (osMajorVersion > 5 || (osMajorVersion == 5 && osMinorVersion >= 1));
         ctrl_filesel( s, "Bitmap file to use for background:", NO_SHORTCUT,
-                                  has_gdip ? FILTER_IMAGE_FILES_GDIP : FILTER_IMAGE_FILES,
+                                  has_gdip ? FILTER_IMAGE_EX_FILES : FILTER_IMAGE_FILES,
                                   FALSE, has_gdip ? "Select image file for background" : "Select bitmap file for background",
                                   HELPCTX(wallpaper_backimage),
                                   conf_filesel_handler, I(CONF_bgimg_file) );
     }
-        /* < */
 
     /*
-     * The icon for Windows title bar
+     * Icon for window title bar, window transparency; "window" appearance panel
      */
+    ctrl_settitle(b, "Window/Icon and Transparency", "Options for extra window appearance");
     if (!midsession) {
-        s = ctrl_getset(b, "Window/Icon", "icon", NULL);
-        ctrl_filesel(s, "The icon on title bar", 'i',
+        s = ctrl_getset(b, "Window/Icon and Transparency", "icon", NULL);
+        ctrl_filesel(s, "Icon on title bar", 'i',
                  FILTER_ICON_FILES, FALSE, "Select icon file",
                  HELPCTX(icon_titlebar),
                  conf_filesel_handler, I(CONF_iconfile));
     }
+    s = ctrl_getset(b, "Window/Icon and Transparency", "opacity", "Opacity of window");
+    ctrl_editbox(s, "Opacity ratio of window (30-100%):", 'p', 20,
+        HELPCTX(win_opacity), conf_win_opacity_handler, I(CONF_win_opacity), ED_INT);
+    ctrl_editbox(s, "Cumulative opacity ratio if unfocused (10-100%):", 'u', 20,
+        HELPCTX(win_opacity_inactive_prod), conf_editbox_handler, I(CONF_win_opacity_inactive_prod), ED_INT);
+    static const struct conf_editbox_handler_type int_deci = {.type = EDIT_FIXEDPOINT, .denominator = 1000};
+    ctrl_editbox(s, "Delay when unfocused (sec):", 'd', 20,
+        HELPCTX(win_opacity_inactive_delay), conf_editbox_handler, I(CONF_win_opacity_inactive_delay), CP(&int_deci));
 
     /*
      * Windows supports a local-command proxy.
@@ -462,7 +482,7 @@ void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
     if (!midsession && backend_vt_from_proto(PROT_SSH)) {
         s = ctrl_getset(b, "Connection/SSH/X11", "x11", "X11 forwarding");
         ctrl_filesel(s, "X authority file for local display", 't',
-                     NULL, false, "Select X authority file",
+                     FILTER_ALL_FILES, false, "Select X authority file",
                      HELPCTX(ssh_tunnels_xauthority),
                      conf_filesel_handler, I(CONF_xauthfile));
     }
@@ -528,5 +548,20 @@ static void wallpaper_dropdown_handler(dlgcontrol *ctrl, dlgparam *dlg, void *da
         else
             id = dlg_listbox_getid(ctrl, dlg, index);
         conf_set_int(conf, conf_item, id);
+    }
+}
+
+static void conf_win_opacity_handler(dlgcontrol *ctrl, dlgparam *dlg, void *data, int event)
+{
+    conf_editbox_handler(ctrl, dlg, data, event);
+    int key = ctrl->context.i;
+    if (event == EVENT_VALCHANGE) {
+        const HWND hwnd = dlg->term_hwnd;
+        if (hwnd) {
+            WinGuiSeat *wgs = (WinGuiSeat *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+            Conf *conf = (Conf *)data;
+            int opacity = conf_get_int(conf, key);
+            wtrans_preview(wgs, opacity);
+        }
     }
 }

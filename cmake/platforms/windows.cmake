@@ -101,14 +101,12 @@ endif()
 
 if(WINELIB)
   enable_language(RC)
-  set(LFLAG_MANIFEST_NO "")
 elseif(CMAKE_C_COMPILER_ID MATCHES "MSVC" OR
        CMAKE_C_COMPILER_FRONTEND_VARIANT MATCHES "MSVC")
   set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /nologo /C1252")
-  set(LFLAG_MANIFEST_NO "/manifest:no")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /manifest:no")
 else()
   set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -c1252")
-  set(LFLAG_MANIFEST_NO "")
 endif()
 
 if(STRICT)
@@ -166,7 +164,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
   #    something _else_ const should make no difference.
 
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
-/w14703 \
+/w14703 /we4013 /we4047 /we4076 /we4133 \
 /wd4244 /wd4267 /wd4018 /wd4146 /wd4293 /wd4090")
 
   # Set the warning level to 1

@@ -94,6 +94,14 @@ Making a release candidate build
  - Make the release tag, pointing at the version-update commit we just
    generated.
 
+ - If the release tag is on a branch (which I expect it generally will
+   be), prepare a merge to main, and make sure it builds sensibly.
+   Even if the branch consists of nothing but cherry-picks _from_
+   main, this will mean that the 'update version number' change
+   appears on main and the snapshots start announcing themselves as
+   post-X.YZ. But also, if there's anything new on the branch, this is
+   how it gets on to main as well.
+
  - Make a release-candidate build from the release tag, and put the
    build.out and build.log files somewhere safe. Normally I store
    these inside the ~/src/putty/X.YZ directory, alongside the git
@@ -112,7 +120,7 @@ Making a release candidate build
  - Make a preliminary gpg signature, but don't run the full release-
    signing procedure. (We use the presence of a full set of GPG
    signatures to distinguish _abandoned_ release candidates from the
-   one that ended up being the release.) In the 'build.X.YZ-rcN.out'
+   one that ended up being the release.) In the 'build-X.YZ-rcN.out'
    directory, run
      sh sign.sh -r -p putty
    which will generate a clearsigned file called
@@ -133,7 +141,9 @@ Making a release candidate build
        + on at least a reasonably current stable Linux distro, and
          also try Debian sid
        + test-build with all of GTK 1, 2 and 3
-       + test-build with -DNOT_X_WINDOWS
+       + test-build with -DNOT_X_WINDOWS (compile flag)
+       + test-build with -DPUTTY_GSSAPI=OFF (cmake flag)
+       + test-build with -DPUTTY_IPV6=OFF (cmake flag)
     * test that the Windows source builds with Visual Studio (just in
       case there's an unguarded clangism that would prevent it)
     * quick check of the outlying network protocols (Telnet, SUPDUP
@@ -144,14 +154,31 @@ Making a release candidate build
     * do some testing on a system with a completely clean slate (no
       prior saved session data)
 
-Preparing to make the release
------------------------------
-
  - Write a release announcement (basically a summary of the changes
    since the last release). Check the draft version into the putty-aux
    repository, so the whole team can help wordsmith it if they want to.
 
- - Update the website, in a local checkout:
+ - Prepare some 'what's new in this release' blurb for the Windows
+   Store. This should be very brief - even briefer than the website
+   news item.
+    * Keep it to a couple of sentences in a single paragraph,
+      templated along the lines of
+        X.YZ adds support for this, that and the other, and fixes bugs
+        including this and that.
+      or
+        X.YZ is a bug-fix release, mostly in the area of Foo, with one
+        important fix to Bar.
+    * Might as well check this into putty-aux too.
+
+ - Prepare a toot! I'm on Mastodon, so I should announce the release
+   there. This means writing a cut-down 500-char announcement, maybe
+   more like the website news item than like the email.
+    * Include any relevant hashtags. Refer to the software as #PuTTY;
+      if you mention SSH then write it as #SSH; similarly if we're
+      fixing a #vulnerability. That's how people will find the toot.
+    * Again, commit to putty-aux for team review.
+
+ - Prepare a website update:
     * Write a release file in components/releases which identifies the
       new version, a section for the Changes page, and a news
       announcement for the front page.
@@ -161,17 +188,10 @@ Preparing to make the release
     * Disable the pre-release sections of the website (if previously
       enabled), by editing prerel_version() in components/Base.mc to
       return undef.
+    * Push to the private clone of the website repo for the team to
+      check over.
 
- - Prepare some 'what's new in this release' blurb for the Windows
-   Store. This should be very brief - even briefer than the website
-   news item. Keep it to a couple of sentences in a single paragraph,
-   templated along the lines of 'X.YZ adds support for this, that and
-   the other, and fixes bugs including this and that', or 'X.YZ is a
-   bug-fix release, mostly in the area of Foo, with one important fix
-   to Bar'.
-    * Might as well check this into putty-aux too.
-
- - Update the wishlist, in a local checkout:
+ - Prepare a wishlist update:
     * If there are any last-minute wishlist entries (e.g. security
       vulnerabilities fixed in the new release), write entries for
       them.
@@ -179,6 +199,22 @@ Preparing to make the release
       branch (so that the wishlist mechanism can't automatically mark
       them as fixed in the new release), add appropriate Fixed-in
       headers for those.
+    * Push to the private clone of the wishlist repo for the team to
+      check over.
+
+The actual release procedure
+----------------------------
+
+Once all the above preparation is done and we've decided we have a
+good release candidate and a good set of announcements, wishlist
+entries etc, this is the procedure for putting it all up on the web.
+
+ - Log in to the MS Partner Center and make sure everything is in
+   order. If the UI has completely changed, make sure you can find
+   your way around the new one; if it wants you to read an enormous
+   document of revised T&Cs, get that out of the way in advance, so it
+   doesn't suddenly become a delay in the middle of the actual
+   release.
 
  - Sign the release in full. In the `build-X.YZ-rcN.out' directory,
    re-verify that the preliminary signed checksums file has a correct
@@ -196,14 +232,10 @@ Preparing to make the release
      sh sign.sh -r putty     # and enter the release key passphrase
      chmod -R a-w putty
 
-The actual release procedure
-----------------------------
-
-Once all the above preparation is done and the release has been built
-locally, this is the procedure for putting it up on the web.
-
- - Make a final adjustment to your local website changes, filling in
-   the release date in components/releases/X.YZ.mi.
+ - Make final adjustments to the local website and wishlist changes,
+   filling in the release date in components/releases/X.YZ.mi, and any
+   missing (e.g. not previously finalised) commit hashes in wishlist
+   entries. Check that both look sensible locally.
 
  - Upload the release itself and its link maps to everywhere it needs
    to be, by running this in the build-X.YZ-rcN.out directory:
@@ -219,18 +251,12 @@ locally, this is the procedure for putting it up on the web.
    correctly and work:
       ../putty/release.pl --version=X.YZ --postcheck
 
- - If the release is on a branch (which I expect it generally will
-   be), merge that branch to main, so that the 'update version number'
-   change appears on main and the snapshots start announcing
-   themselves as post-X.YZ.
-
  - Push all the git repositories:
     * run 'git push' in the website checkout
     * run 'git push' in the wishlist checkout
     * push from the main PuTTY checkout. Typically this one will be
-      pushing both the release tag and the merge we just made to the
-      main branch, plus removing the pre-release branch, so you'll
-      want some
+      pushing both the release tag and the merge to the main branch,
+      plus removing the pre-release branch, so you'll want some
       commands along these lines:
         git push origin main          # update the main branch
         git push origin --tags        # should push the new release tag
@@ -276,6 +302,7 @@ locally, this is the procedure for putting it up on the web.
     + Mail that release announcement to
       <putty-announce@lists.tartarus.org>.
     + Post it to comp.security.ssh.
+    + Post the prepared toot to Mastodon.
     + Mention it in <TDHTT> on mono.
 
  - Edit the master ~/adm/puttysnap.sh to disable pre-release builds,

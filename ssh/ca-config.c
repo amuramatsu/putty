@@ -250,10 +250,10 @@ static void ca_save_handler(dlgcontrol *ctrl, dlgparam *dp,
                             void *data, int event)
 {
     struct ca_state *st = (struct ca_state *)ctrl->context.p;
-    char msg_str_buf[256];
     if (event == EVENT_ACTION) {
         if (!*st->validity) {
-            dlg_error_msg(dp, l10n_translate("No validity expression configured for this key", msg_str_buf));
+            dlg_error_msg(dp, "No validity expression configured "
+                          "for this key");
             return;
         }
 
@@ -272,7 +272,7 @@ static void ca_save_handler(dlgcontrol *ctrl, dlgparam *dp,
         }
 
         if (!st->ca_pubkey_blob) {
-            dlg_error_msg(dp, l10n_translate("No valid CA public key entered", msg_str_buf));
+            dlg_error_msg(dp, "No valid CA public key entered");
             return;
         }
 
@@ -455,9 +455,10 @@ void setup_ca_config_box(struct controlbox *b)
                      P(st), P(NULL));
     c->column = 0;
     st->ca_pubkey_edit = c;
-    c = ctrl_filesel(s, "Read from file", NO_SHORTCUT, NULL, false,
-                     "Select public key file of certification authority",
-                     HELPCTX(ssh_kex_cert), ca_pubkey_file_handler, P(st));
+    c = ctrl_filesel(
+        s, "Read from file", NO_SHORTCUT, FILTER_ALL_FILES, false,
+        "Select public key file of certification authority",
+        HELPCTX(ssh_kex_cert), ca_pubkey_file_handler, P(st));
     c->fileselect.just_button = true;
     c->align_next_to = st->ca_pubkey_edit;
     c->column = 1;

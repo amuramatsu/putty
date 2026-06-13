@@ -149,10 +149,10 @@ static bool tempseat_is_utf8(Seat *seat)
     return seat_is_utf8(ts->realseat);
 }
 
-static const char *tempseat_get_x_display(Seat *seat)
+static const char *tempseat_get_display(Seat *seat, SeatDisplayType dtype)
 {
     TempSeat *ts = container_of(seat, TempSeat, seat);
-    return seat_get_x_display(ts->realseat);
+    return seat_get_display(ts->realseat, dtype);
 }
 
 static bool tempseat_get_windowid(Seat *seat, long *id_out)
@@ -288,6 +288,17 @@ static void tempseat_connection_fatal(Seat *seat, const char *message)
     unreachable("connection_fatal should never be called on TempSeat");
 }
 
+static void tempseat_nonfatal(Seat *seat, const char *message)
+{
+    /*
+     * Non-fatal errors specific to a Seat should also not occur,
+     * because those will be for things like I/O errors writing the
+     * host key collection, and a backend's not _doing_ that when we
+     * haven't connected it to the host yet.
+     */
+    unreachable("nonfatal should never be called on TempSeat");
+}
+
 static bool tempseat_eof(Seat *seat)
 {
     /*
@@ -327,6 +338,7 @@ static const struct SeatVtable tempseat_vt = {
     .notify_remote_exit = tempseat_notify_remote_exit,
     .notify_remote_disconnect = tempseat_notify_remote_disconnect,
     .connection_fatal = tempseat_connection_fatal,
+    .nonfatal = tempseat_nonfatal,
     .update_specials_menu = tempseat_update_specials_menu,
     .get_ttymode = tempseat_get_ttymode,
     .set_busy_status = tempseat_set_busy_status,
@@ -336,7 +348,7 @@ static const struct SeatVtable tempseat_vt = {
     .prompt_descriptions = tempseat_prompt_descriptions,
     .is_utf8 = tempseat_is_utf8,
     .echoedit_update = tempseat_echoedit_update,
-    .get_x_display = tempseat_get_x_display,
+    .get_display = tempseat_get_display,
     .get_windowid = tempseat_get_windowid,
     .get_window_pixel_size = tempseat_get_window_pixel_size,
     .stripctrl_new = tempseat_stripctrl_new,

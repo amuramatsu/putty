@@ -339,7 +339,7 @@ static void do_argsdone(Supdup *supdup, strbuf *outbuf, int c)
           that line.  If the cursor is at the bottom line, scroll
           up.
         */
-        put_fmt(outbuf, "\015\012");
+        put_fmt(outbuf, "\015\012\033[K");
         break;
 
       case TDNOP:
@@ -559,17 +559,20 @@ static void do_supdup_read(Supdup *supdup, const char *buf, size_t len)
     strbuf_free(outbuf);
 }
 
-static void supdup_log(Plug *plug, PlugLogType type, SockAddr *addr, int port,
-                       const char *error_msg, int error_code)
+static void supdup_log(Plug *plug, Socket *s, PlugLogType type, SockAddr *addr,
+                       int port, const char *error_msg, int error_code)
 {
     Supdup *supdup = container_of(plug, Supdup, plug);
-    backend_socket_log(supdup->seat, supdup->logctx, type, addr, port,
+    backend_socket_log(supdup->seat, supdup->logctx, s, type, addr, port,
                        error_msg, error_code,
                        supdup->conf, supdup->socket_connected);
     if (type == PLUGLOG_CONNECT_SUCCESS) {
         supdup->socket_connected = true;
         if (supdup->ldisc)
             ldisc_check_sendok(supdup->ldisc);
+
+        /* No local authentication phase in this protocol */
+        seat_set_trust_status(supdup->seat, false);
     }
 }
 
@@ -753,9 +756,9 @@ static char *supdup_init(const BackendVtable *x, Seat *seat,
     /*
      * Open socket.
      */
-    supdup->s = new_connection(addr, *realhost, port, false, true,
-                               nodelay, keepalive, &supdup->plug, supdup->conf,
-                               &supdup->interactor);
+    supdup->s = new_main_connection(
+        addr, *realhost, port, false, true, nodelay, keepalive, &supdup->plug,
+        supdup->conf, &supdup->interactor, supdup->logctx);
     if ((err = sk_socket_error(supdup->s)) != NULL)
         return dupstr(err);
 
@@ -812,7 +815,6 @@ static char *supdup_init(const BackendVtable *x, Seat *seat,
      * We next expect a connection message followed by %TDNOP from the server
      */
     supdup->state = CONNECTING;
-    seat_set_trust_status(supdup->seat, false);
 
     /* Make sure the terminal is in UTF-8 mode. */
     c_write(supdup, (unsigned char *)utf8, strlen(utf8));

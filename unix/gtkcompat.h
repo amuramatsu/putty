@@ -72,6 +72,7 @@
 #define gtk_adjustment_get_value(a) ((a)->value)
 #define gtk_selection_data_get_selection(a) ((a)->selection)
 #define gdk_display_beep(disp) gdk_beep()
+#define gtk_get_current_event_time() GDK_CURRENT_TIME
 
 #define gtk_widget_set_has_window(w, b)                 \
     gtk1_widget_set_unset_flag(w, GTK_NO_WINDOW, !(b))
@@ -187,6 +188,7 @@
 #endif /* 2.24 */
 
 #if !GTK_CHECK_VERSION(3,0,0)
+#define GDK_IS_X11_DISPLAY(display) (1)
 #define GDK_IS_X11_WINDOW(window) (1)
 #endif
 
@@ -218,3 +220,7 @@
     gdk_cursor_new_for_display(gdk_display_get_default(), cur)
 
 #endif /* 3.0 */
+
+#if !HAVE_G_APPLICATION_DEFAULT_FLAGS
+#define G_APPLICATION_DEFAULT_FLAGS G_APPLICATION_FLAGS_NONE
+#endif

@@ -193,6 +193,7 @@ static const SeatVtable sesschan_seat_vt = {
     .notify_remote_exit = sesschan_notify_remote_exit,
     .notify_remote_disconnect = nullseat_notify_remote_disconnect,
     .connection_fatal = sesschan_connection_fatal,
+    .nonfatal = nullseat_nonfatal,
     .update_specials_menu = nullseat_update_specials_menu,
     .get_ttymode = nullseat_get_ttymode,
     .set_busy_status = nullseat_set_busy_status,
@@ -202,7 +203,7 @@ static const SeatVtable sesschan_seat_vt = {
     .prompt_descriptions = nullseat_prompt_descriptions,
     .is_utf8 = nullseat_is_never_utf8,
     .echoedit_update = nullseat_echoedit_update,
-    .get_x_display = nullseat_get_x_display,
+    .get_display = nullseat_get_display,
     .get_windowid = nullseat_get_windowid,
     .get_window_pixel_size = sesschan_get_window_pixel_size,
     .stripctrl_new = nullseat_stripctrl_new,
@@ -309,7 +310,7 @@ static void sesschan_start_backend(sesschan *sess, const char *cmd)
      * confusingly set in the absence of that.
      *
      * (DISPLAY must also be cleared, but pty.c will do that anyway
-     * when our get_x_display method returns NULL.)
+     * when our get_display method returns NULL.)
      */
     static const char *const env_to_unset[] = {
         "XAUTHORITY", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
@@ -370,19 +371,13 @@ bool sesschan_run_subsystem(Channel *chan, ptrlen subsys)
     return false;
 }
 
-static void fwd_log(Plug *plug, PlugLogType type, SockAddr *addr, int port,
-                    const char *error_msg, int error_code)
-{ /* don't expect any weirdnesses from a listening socket */ }
-static void fwd_closing(Plug *plug, PlugCloseType type, const char *error_msg)
-{ /* not here, either */ }
-
 static int xfwd_accepting(Plug *p, accept_fn_t constructor, accept_ctx_t ctx)
 {
     sesschan *sess = container_of(p, sesschan, xfwd_plug);
     Plug *plug;
     Channel *chan;
     Socket *s;
-    SocketPeerInfo *pi;
+    SocketEndpointInfo *pi;
     const char *err;
 
     chan = portfwd_raw_new(sess->c->cl, &plug, false);
@@ -393,14 +388,14 @@ static int xfwd_accepting(Plug *p, accept_fn_t constructor, accept_ctx_t ctx)
     }
     pi = sk_peer_info(s);
     portfwd_raw_setup(chan, s, ssh_serverside_x11_open(sess->c->cl, chan, pi));
-    sk_free_peer_info(pi);
+    sk_free_endpoint_info(pi);
 
     return 0;
 }
 
 static const PlugVtable xfwd_plugvt = {
-    .log = fwd_log,
-    .closing = fwd_closing,
+    .log = nullplug_log,
+    .closing = nullplug_closing,
     .accepting = xfwd_accepting,
 };
 
@@ -472,8 +467,8 @@ static int agentfwd_accepting(
 }
 
 static const PlugVtable agentfwd_plugvt = {
-    .log = fwd_log,
-    .closing = fwd_closing,
+    .log = nullplug_log,
+    .closing = nullplug_closing,
     .accepting = agentfwd_accepting,
 };
 

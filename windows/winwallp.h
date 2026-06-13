@@ -1,7 +1,9 @@
 #ifndef PUTTY_WINWALLP_H
 #define PUTTY_WINWALLP_H
 
+#ifdef _WINDOWS
 #include <wingdi.h>
+#endif
 
 enum {
     WALLPAPER_MODE_DESKTOP = 1,
@@ -27,31 +29,29 @@ enum {
     WALLPAPER_PLACE_DEFAULT = WALLPAPER_PLACE_TILE_X | WALLPAPER_PLACE_TILE_Y,
 };
 
+#ifdef _WINDOWS
+
+typedef struct WinGuiSeat WinGuiSeat;
+
 typedef struct wallpaper_paint_mode_tag {
     int place, align;
     BOOL opaque;
     BLENDFUNCTION bf;
 } wallpaper_paint_mode;
 
-extern HBITMAP background_bmp;
-extern HBITMAP img_bmp;
-extern BOOL bg_has_alpha;
-extern BOOL img_has_alpha;
-
-extern BOOL msimg_alphablend(HDC hdcDest, int xoriginDest, int yoriginDest, int wDest, int hDest, HDC hdcSrc, int xoriginSrc, int yoriginSrc, int wSrc, int hSrc, BLENDFUNCTION ftn);
-extern void wallpaper_paint(HDC hdc, const RECT *rect, HBITMAP hbmp, const wallpaper_paint_mode *mode);
-extern void wallpaper_fill_bgcolor(HDC hdc, const RECT *rect);
-extern HBITMAP create_large_bitmap(HDC hdc, int width, int height);
-extern void get_bitmap_size(HBITMAP hbmp, int *width, int *height);
-extern COLORREF wallpaper_get_bg_color(void);
+BOOL msimg_alphablend(HDC hdcDest, int xoriginDest, int yoriginDest, int wDest, int hDest, HDC hdcSrc, int xoriginSrc, int yoriginSrc, int wSrc, int hSrc, BLENDFUNCTION ftn);
+void wallpaper_paint(WinGuiSeat *wgs, HDC hdc, const RECT *rect, HBITMAP hbmp, const wallpaper_paint_mode *mode);
+void wallpaper_fill_bgcolor(WinGuiSeat *wgs, HDC hdc, const RECT *rect);
+HBITMAP create_large_bitmap(HDC hdc, int width, int height, Conf *conf);
+void get_bitmap_size(HBITMAP hbmp, int *width, int *height);
+COLORREF wallpaper_get_bg_color(WinGuiSeat *wgs);
 
 /* gdiplus */
 
 int gdip_init(void);
 void gdip_terminate(void);
-HBITMAP gdip_load_image(const char *path);
+HBITMAP gdip_load_image(const WCHAR *path);
 
-#define FILTER_IMAGE_FILES_GDIP ("Image Files\0*.bmp;*.jpg;*.jpeg;*.png;*.tiff;*.wmf;*.gif\0" \
-                                 "All Files (*.*)\0*\0")
+#endif // _WINDOWS
 
 #endif

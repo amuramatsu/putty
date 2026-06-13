@@ -393,13 +393,11 @@ char *staticwrap(struct ctlpos *cp, HWND hwnd, const char *text, int *lines)
     INT *pwidths, nfit;
     SIZE size;
     const char *p;
-    char *ret, *q;
     RECT r;
     HFONT oldfont, newfont;
 
-    ret = snewn(1+strlen(text), char);
+    strbuf *sb = strbuf_new();
     p = text;
-    q = ret;
     pwidths = snewn(1+strlen(text), INT);
 
     /*
@@ -423,16 +421,20 @@ char *staticwrap(struct ctlpos *cp, HWND hwnd, const char *text, int *lines)
     oldfont = SelectObject(hdc, newfont);
 
     while (*p) {
-        if (!GetTextExtentExPoint(hdc, p, strlen(p), width,
+        // break at newline if found
+        const char *nl_pos = strchr(p, '\n');
+        size_t rest = strlen(p);
+        size_t limit = nl_pos ? nl_pos - p : rest;
+        if (!GetTextExtentExPoint(hdc, p, limit, width,
                                   &nfit, pwidths, &size) ||
-            (size_t)nfit >= strlen(p)) {
+            (!nl_pos && (size_t)nfit >= rest)) {
             /*
              * Either GetTextExtentExPoint returned failure, or the
              * whole of the rest of the text fits on this line.
              * Either way, we stop wrapping, copy the remainder of
              * the input string unchanged to the output, and leave.
              */
-            strcpy(q, p);
+            put_datapl(sb, ptrlen_from_asciz(p));
             break;
         }
 
@@ -449,9 +451,8 @@ char *staticwrap(struct ctlpos *cp, HWND hwnd, const char *text, int *lines)
             }
         }
 
-        strncpy(q, p, nfit);
-        q[nfit] = '\n';
-        q += nfit+1;
+        put_data(sb, p, nfit);
+        put_byte(sb, '\n');
 
         p += nfit;
         while (*p && isspace((unsigned char)*p))
@@ -467,7 +468,7 @@ char *staticwrap(struct ctlpos *cp, HWND hwnd, const char *text, int *lines)
 
     sfree(pwidths);
 
-    return ret;
+    return strbuf_to_str(sb);
 }
 
 /*
@@ -1166,6 +1167,8 @@ void progressbar(struct ctlpos *cp, int id)
           , WS_EX_CLIENTEDGE, "", id);
 }
 
+#include "controls-lazy.h"
+
 /* ----------------------------------------------------------------------
  * Platform-specific side of portable dialog-box mechanism.
  */
@@ -1181,57 +1184,50 @@ void progressbar(struct ctlpos *cp, int id)
  */
 static char *shortcut_escape(const char *text, char shortcut)
 {
-        int text_len;
-    char *ret;
-    char const *p;
-    char *q;
-    char *r, lastchar = '\0';
-    int search;
-
     if (!text)
         return NULL;                   /* sfree won't choke on this */
 
-        text_len = strlen(text);
-        ret = snewn(text_len > 4 ? 2*text_len+1 : text_len + 5, char);   /* size potentially doubles! */
+    int text_len = strlen(text);
+    strbuf *sb = strbuf_new();
     shortcut = tolower((unsigned char)shortcut);
 
-    p = text;
-    search = 1;
+    const char *p = text;
+    char *next_char, last_char = '\0';
+    bool search = true;
     while (*p) {
-         r = CharNext (p);
-         if (r - p > 1) {
-              search = 0;
-              break;
-         }
-         p = r;
+        next_char = CharNext(p);
+        if (next_char - p > 1) { /* was multibyte */
+            search = false;
+            break;
+        }
+        p = next_char;
     }
     p = text;
-    q = ret;
+
     while (*p) {
         if (search && shortcut != NO_SHORTCUT &&
             tolower((unsigned char)*p) == shortcut) {
-            *q++ = '&';
+            put_byte(sb, '&');
             shortcut = NO_SHORTCUT;    /* stop it happening twice */
         } else if (*p == '&') {
-            *q++ = '&';
+            put_byte(sb, '&');
         }
-        lastchar = *p;
-        r = CharNext (p);
-        while (p != r)
-             *q++ = *p++;
+        last_char = *p;
+        next_char = CharNext(p);
+        while (p != next_char)
+            put_byte(sb, *p++);
     }
     if (shortcut != NO_SHORTCUT) { /* Japanese style shortcut */
-         if (lastchar == ':')
-              q--;
-         *q++ = '(';
-         *q++ = '&';
-         *q++ = toupper(shortcut);
-         *q++ = ')';
-         if (lastchar == ':')
-              *q++ = lastchar;
+        if (last_char == ':')
+            strbuf_shrink_by(sb, 1);
+        put_byte(sb, '(');
+        put_byte(sb, '&');
+        put_byte(sb, toupper(shortcut));
+        put_byte(sb, ')');
+        if (last_char == ':')
+            put_byte(sb, last_char);
     }
-    *q = '\0';
-    return ret;
+    return strbuf_to_str(sb);
 }
 
 void winctrl_add_shortcuts(struct dlgparam *dp, struct winctrl *c)
@@ -1306,14 +1302,22 @@ void winctrl_init(struct winctrls *wc)
     wc->byctrl = newtree234(winctrl_cmp_byctrl);
     wc->byid = newtree234(winctrl_cmp_byid);
 }
+
+void winctrl_free(struct winctrl *c)
+{
+    // Notice that c->ctrl may not available here due to the call ordering of pds_free().
+    if (c->data_freefn) c->data_freefn(c);
+    else sfree(c->data);
+    sfree(c);
+}
+
 void winctrl_cleanup(struct winctrls *wc)
 {
     struct winctrl *c;
 
     while ((c = index234(wc->byid, 0)) != NULL) {
         winctrl_remove(wc, c);
-        sfree(c->data);
-        sfree(c);
+        winctrl_free(c);
     }
 
     freetree234(wc->byctrl);
@@ -1406,6 +1410,7 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
         c->base_id = c->align_id = base_id;
         c->num_ids = 1;
         c->data = NULL;
+        c->data_freefn = NULL;
         memset(c->shortcuts, NO_SHORTCUT, lenof(c->shortcuts));
         winctrl_add(wc, c);
         beginbox(cp, s->boxtitle, base_id);
@@ -1419,6 +1424,7 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
         c->base_id = c->align_id = base_id;
         c->num_ids = 1;
         c->data = dupstr(s->boxtitle);
+        c->data_freefn = NULL;
         memset(c->shortcuts, NO_SHORTCUT, lenof(c->shortcuts));
         winctrl_add(wc, c);
         paneltitle(cp, base_id);
@@ -1572,6 +1578,8 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
                 SetDlgItemText(pos.hwnd, base_id, ctrl->label);
                 MakeDlgItemBorderless(pos.hwnd, base_id);
             }
+            if (ctrl->handler)
+                ctrl->handler(ctrl, dp, GetDlgItem(pos.hwnd, base_id), EVENT_CALLBACK);
             break;
           case CTRL_EDITBOX:
             num_ids = 2;               /* static, edit */
@@ -1705,10 +1713,8 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
             shortcuts[nshortcuts++] = ctrl->fileselect.shortcut;
             num_ids = 3;
             if (!ctrl->fileselect.just_button) {
-                char *browse = l10n_dupstr ("Browse...");
                 editbutton(&pos, escaped, base_id, base_id+1,
-                           browse, base_id+2);
-                sfree (browse);
+                           "Browse...", base_id+2);
             } else {
                 button(&pos, escaped, base_id+2, false);
             }
@@ -1720,14 +1726,8 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
                                       ctrl->fontselect.shortcut);
             shortcuts[nshortcuts++] = ctrl->fontselect.shortcut;
             statictext(&pos, escaped, 1, base_id);
-            {
-              char *change;
-
-              change = l10n_dupstr ("Change...");
-            staticbtn(&pos, "", base_id+1, change, base_id+2);
-              sfree (change);
-            }
-            data = fontspec_new("", false, 0, 0);
+            staticbtn(&pos, "", base_id+1, "Change...", base_id+2);
+            data = fontspec_new_default();
             sfree(escaped);
             break;
           default:
@@ -1751,6 +1751,7 @@ void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
             c->align_id = c->base_id + align_id_relative;
             c->num_ids = num_ids;
             c->data = data;
+            c->data_freefn = NULL;
             memcpy(c->shortcuts, shortcuts, sizeof(shortcuts));
             winctrl_add(wc, c);
             winctrl_add_shortcuts(dp, c);
@@ -1921,6 +1922,8 @@ bool winctrl_handle_command(struct dlgparam *dp, UINT msg,
      */
     switch (ctrl->type) {
       case CTRL_EDITBOX:
+        if (msg == WM_COMMAND && ctrl->editbox.has_list)
+            lazy_items_handle_cmd(c, ctrl, dp, HIWORD(wParam));
         if (msg == WM_COMMAND && !ctrl->editbox.has_list &&
             (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS))
             winctrl_set_focus(ctrl, dp, HIWORD(wParam) == EN_SETFOCUS);
@@ -1994,6 +1997,8 @@ bool winctrl_handle_command(struct dlgparam *dp, UINT msg,
         }
         break;
       case CTRL_LISTBOX:
+        if (msg == WM_COMMAND)
+            lazy_items_handle_cmd(c, ctrl, dp, HIWORD(wParam));
         if (msg == WM_COMMAND && ctrl->listbox.height != 0 &&
             (HIWORD(wParam)==LBN_SETFOCUS || HIWORD(wParam)==LBN_KILLFOCUS))
             winctrl_set_focus(ctrl, dp, HIWORD(wParam) == LBN_SETFOCUS);
@@ -2032,39 +2037,33 @@ bool winctrl_handle_command(struct dlgparam *dp, UINT msg,
             (msg == WM_COMMAND &&
              (HIWORD(wParam) == BN_CLICKED ||
               HIWORD(wParam) == BN_DOUBLECLICKED))) {
-            OPENFILENAME of;
-            char filename[FILENAME_MAX];
-
-            memset(&of, 0, sizeof(of));
-            of.hwndOwner = dp->hwnd;
-            if (ctrl->fileselect.filter)
-                of.lpstrFilter = ctrl->fileselect.filter;
-            else
-                of.lpstrFilter = "All Files (*.*)\0*\0\0\0";
-            of.lpstrCustomFilter = NULL;
-            of.nFilterIndex = 1;
-            of.lpstrFile = filename;
+            Filename *fn_prev = NULL;
             if (!ctrl->fileselect.just_button) {
-                GetDlgItemText(dp->hwnd, c->base_id+1,
-                               filename, lenof(filename));
-                filename[lenof(filename)-1] = '\0';
-            } else {
-                *filename = '\0';
+                wchar_t *text = GetDlgItemTextW_alloc(dp->hwnd, c->base_id+1);
+                if (*text)
+                    fn_prev = filename_from_wstr(text);
+                sfree(text);
             }
-            of.nMaxFile = lenof(filename);
-            of.lpstrFileTitle = NULL;
-            of.lpstrTitle = ctrl->fileselect.title;
-            of.Flags = 0;
-            if (request_file(NULL, &of, false, ctrl->fileselect.for_writing)) {
+
+            Filename *fn = request_file(
+                dp->hwnd, ctrl->fileselect.title, fn_prev,
+                ctrl->fileselect.for_writing, NULL, false,
+                ctrl->fileselect.filter);
+            if (fn_prev)
+                filename_free(fn_prev);
+
+            if (fn) {
                 if (!ctrl->fileselect.just_button) {
-                    SetDlgItemText(dp->hwnd, c->base_id + 1, filename);
+                    SetDlgItemTextW(dp->hwnd, c->base_id + 1,
+                                    filename_to_wstr(fn));
                     ctrl->handler(ctrl, dp, dp->data, EVENT_VALCHANGE);
                 } else {
                     assert(!c->data);
-                    c->data = filename;
+                    c->data = fn;
                     ctrl->handler(ctrl, dp, dp->data, EVENT_ACTION);
                     c->data = NULL;
                 }
+                filename_free(fn);
             }
         }
         break;
@@ -2248,11 +2247,30 @@ void dlg_editbox_set(dlgcontrol *ctrl, dlgparam *dp, char const *text)
     SetDlgItemText(dp->hwnd, c->base_id+1, text);
 }
 
+void dlg_editbox_set_utf8(dlgcontrol *ctrl, dlgparam *dp, char const *text)
+{
+    struct winctrl *c = dlg_findbyctrl(dp, ctrl);
+    assert(c && c->ctrl->type == CTRL_EDITBOX);
+    wchar_t *wtext = dup_mb_to_wc(CP_UTF8, text);
+    SetDlgItemTextW(dp->hwnd, c->base_id+1, wtext);
+    sfree(wtext);
+}
+
 char *dlg_editbox_get(dlgcontrol *ctrl, dlgparam *dp)
 {
     struct winctrl *c = dlg_findbyctrl(dp, ctrl);
     assert(c && c->ctrl->type == CTRL_EDITBOX);
     return GetDlgItemText_alloc(dp->hwnd, c->base_id+1);
+}
+
+char *dlg_editbox_get_utf8(dlgcontrol *ctrl, dlgparam *dp)
+{
+    struct winctrl *c = dlg_findbyctrl(dp, ctrl);
+    assert(c && c->ctrl->type == CTRL_EDITBOX);
+    wchar_t *wtext = GetDlgItemTextW_alloc(dp->hwnd, c->base_id+1);
+    char *text = dup_wc_to_mb(CP_UTF8, wtext, "");
+    sfree(wtext);
+    return text;
 }
 
 void dlg_editbox_select_range(dlgcontrol *ctrl, dlgparam *dp,
@@ -2272,6 +2290,7 @@ void dlg_listbox_clear(dlgcontrol *ctrl, dlgparam *dp)
            (c->ctrl->type == CTRL_LISTBOX ||
             (c->ctrl->type == CTRL_EDITBOX &&
              c->ctrl->editbox.has_list)));
+    if (lazy_items_clear(c, ctrl, dp)) return;
     msg = (c->ctrl->type==CTRL_LISTBOX && c->ctrl->listbox.height!=0 ?
            LB_RESETCONTENT : CB_RESETCONTENT);
     SendDlgItemMessage(dp->hwnd, c->base_id+1, msg, 0, 0);
@@ -2285,6 +2304,7 @@ void dlg_listbox_del(dlgcontrol *ctrl, dlgparam *dp, int index)
            (c->ctrl->type == CTRL_LISTBOX ||
             (c->ctrl->type == CTRL_EDITBOX &&
              c->ctrl->editbox.has_list)));
+    if (lazy_items_del(c, ctrl, dp, index)) return;
     msg = (c->ctrl->type==CTRL_LISTBOX && c->ctrl->listbox.height!=0 ?
            LB_DELETESTRING : CB_DELETESTRING);
     SendDlgItemMessage(dp->hwnd, c->base_id+1, msg, index, 0);
@@ -2298,6 +2318,7 @@ void dlg_listbox_add(dlgcontrol *ctrl, dlgparam *dp, char const *text)
            (c->ctrl->type == CTRL_LISTBOX ||
             (c->ctrl->type == CTRL_EDITBOX &&
              c->ctrl->editbox.has_list)));
+    if (lazy_items_add(c, ctrl, dp, text)) return;
     msg = (c->ctrl->type==CTRL_LISTBOX && c->ctrl->listbox.height!=0 ?
            LB_ADDSTRING : CB_ADDSTRING);
     SendDlgItemMessage(dp->hwnd, c->base_id+1, msg, 0, (LPARAM)text);
@@ -2319,6 +2340,7 @@ void dlg_listbox_addwithid(dlgcontrol *ctrl, dlgparam *dp,
            (c->ctrl->type == CTRL_LISTBOX ||
             (c->ctrl->type == CTRL_EDITBOX &&
              c->ctrl->editbox.has_list)));
+    if (lazy_items_addwithid(c, ctrl, dp, text, id)) return;
     msg = (c->ctrl->type==CTRL_LISTBOX && c->ctrl->listbox.height!=0 ?
            LB_ADDSTRING : CB_ADDSTRING);
     msg2 = (c->ctrl->type==CTRL_LISTBOX && c->ctrl->listbox.height!=0 ?
@@ -2363,6 +2385,7 @@ bool dlg_listbox_issel(dlgcontrol *ctrl, dlgparam *dp, int index)
     assert(c && c->ctrl->type == CTRL_LISTBOX &&
            c->ctrl->listbox.multisel &&
            c->ctrl->listbox.height != 0);
+    if (lazy_items_is_delayed(c, ctrl, dp) && !index) return false;
     return
         SendDlgItemMessage(dp->hwnd, c->base_id+1, LB_GETSEL, index, 0);
 }
@@ -2373,6 +2396,7 @@ void dlg_listbox_select(dlgcontrol *ctrl, dlgparam *dp, int index)
     int msg;
     assert(c && c->ctrl->type == CTRL_LISTBOX &&
            !c->ctrl->listbox.multisel);
+    if (lazy_items_select(c, ctrl, dp, index)) return;
     msg = (c->ctrl->listbox.height != 0 ? LB_SETCURSEL : CB_SETCURSEL);
     SendDlgItemMessage(dp->hwnd, c->base_id+1, msg, index, 0);
 }
@@ -2389,7 +2413,7 @@ void dlg_label_change(dlgcontrol *ctrl, dlgparam *dp, char const *text2)
     struct winctrl *c = dlg_findbyctrl(dp, ctrl);
     char *escaped = NULL;
     int id = -1;
-    char *text = l10n_dupstr (text2);
+    char *text = l10n_dupstr(text2);
 
     assert(c);
     switch (c->ctrl->type) {
@@ -2431,7 +2455,7 @@ void dlg_label_change(dlgcontrol *ctrl, dlgparam *dp, char const *text2)
         SetDlgItemText(dp->hwnd, id, escaped);
         sfree(escaped);
     }
-    sfree (text);
+    sfree(text);
 }
 
 void dlg_filesel_set(dlgcontrol *ctrl, dlgparam *dp, Filename *fn)
@@ -2440,23 +2464,21 @@ void dlg_filesel_set(dlgcontrol *ctrl, dlgparam *dp, Filename *fn)
     assert(c);
     assert(c->ctrl->type == CTRL_FILESELECT);
     assert(!c->ctrl->fileselect.just_button);
-    SetDlgItemText(dp->hwnd, c->base_id+1, fn->path);
+    SetDlgItemTextW(dp->hwnd, c->base_id+1, fn->wpath);
 }
 
 Filename *dlg_filesel_get(dlgcontrol *ctrl, dlgparam *dp)
 {
     struct winctrl *c = dlg_findbyctrl(dp, ctrl);
-    char *tmp;
-    Filename *ret;
     assert(c);
     assert(c->ctrl->type == CTRL_FILESELECT);
     if (!c->ctrl->fileselect.just_button) {
-        tmp = GetDlgItemText_alloc(dp->hwnd, c->base_id+1);
-        ret = filename_from_str(tmp);
+        wchar_t *tmp = GetDlgItemTextW_alloc(dp->hwnd, c->base_id+1);
+        Filename *ret = filename_from_wstr(tmp);
         sfree(tmp);
         return ret;
     } else {
-        return filename_from_str(c->data);
+        return filename_copy(c->data);
     }
 }
 
@@ -2487,6 +2509,17 @@ FontSpec *dlg_fontsel_get(dlgcontrol *ctrl, dlgparam *dp)
     struct winctrl *c = dlg_findbyctrl(dp, ctrl);
     assert(c && c->ctrl->type == CTRL_FONTSELECT);
     return fontspec_copy((FontSpec *)c->data);
+}
+
+void dlg_invalidate(dlgcontrol *ctrl, dlgparam *dp, bool erase)
+{
+    struct winctrl *c = dlg_findbyctrl(dp, ctrl);
+    if (!c) return;
+    for (int i = 0; i < c->num_ids; i++) {
+        HWND hw = GetDlgItem(dp->hwnd, c->base_id + i);
+        if (!hw) continue;
+        InvalidateRect(hw, NULL, erase);
+    }
 }
 
 /*

@@ -16,6 +16,7 @@
 #include "storage.h"
 #include "dialog.h"
 #include "licence.h"
+#include "winl10n.h"
 
 #include <commctrl.h>
 #include <commdlg.h>
@@ -251,6 +252,47 @@ static char *getevent(int i)
 static HWND logbox;
 HWND event_log_window(void) { return logbox; }
 
+static void update_logbox_horizontal_extent(HWND logbox)
+{
+    /* Find the width of every entry in the current Event Log, and set
+     * the horizontal scrollbar so that you can scroll right to see
+     * all of them. */
+    HWND listbox = GetDlgItem(logbox, IDN_LIST);
+    HDC hdc = GetDC(listbox);
+    int count = SendMessage(listbox, LB_GETCOUNT, 0, 0);
+    strbuf *sb = strbuf_new();
+    WPARAM maxwidth = 0;
+    for (int i = 0; i < count; i++) {
+        size_t len = SendMessage(listbox, LB_GETTEXTLEN, i, 0);
+        strbuf_clear(sb);
+        SendMessage(listbox, LB_GETTEXT, i, (LPARAM)strbuf_append(sb, len));
+        SIZE size;
+        if (GetTextExtentPoint(hdc, sb->s, sb->len, &size)) {
+            if (maxwidth < size.cx)
+                maxwidth = size.cx;
+        }
+    }
+    strbuf_free(sb);
+    ReleaseDC(listbox, hdc);
+
+    /*
+     * This doesn't seem to set _exactly_ the right width. If I scroll
+     * the scrollbar right as far as it will go, I find I end up with
+     * a bit of extra space on the right of the longest piece of text.
+     * I don't know why that is.
+     *
+     * Testing with debug(), GetTextExtentPoint seems to be correctly
+     * returning the exact width in pixels of each log entry's text.
+     * And the docs for LB_SETHORIZONTALEXTENT say that it wants a
+     * width in pixels too. So I don't think it can be the usual
+     * problem of confusing logical dialog units and pixels. (In any
+     * case, on the high-DPI display where I tested, the difference
+     * between those is more than a factor of 2, whereas I'm seeing a
+     * discrepancy of only about 10%.)
+     */
+    SendMessage(listbox, LB_SETHORIZONTALEXTENT, maxwidth, 0);
+}
+
 static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
                                 WPARAM wParam, LPARAM lParam)
 {
@@ -273,6 +315,8 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
             SendDlgItemMessage(hwnd, IDN_LIST, LB_ADDSTRING,
                                0, (LPARAM) events_circular[(circular_first + i) % LOGEVENT_CIRCULAR_MAX]);
         l10n_created_window(hwnd);
+        update_logbox_horizontal_extent(hwnd);
+
         return 1;
       }
       case WM_COMMAND:
@@ -301,35 +345,21 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
                                                    LB_GETSELITEMS,
                                                    selcount,
                                                    (LPARAM) selitems);
-                    int i;
-                    int size;
-                    char *clipdata;
-                    static unsigned char sel_nl[] = SEL_NL;
+                    static const unsigned char sel_nl[] = SEL_NL;
 
                     if (count == 0) {  /* can't copy zero stuff */
                         MessageBeep(0);
                         break;
                     }
 
-                    size = 0;
-                    for (i = 0; i < count; i++)
-                        size +=
-                            strlen(getevent(selitems[i])) + sizeof(sel_nl);
-
-                    clipdata = snewn(size, char);
-                    if (clipdata) {
-                        char *p = clipdata;
-                        for (i = 0; i < count; i++) {
-                            char *q = getevent(selitems[i]);
-                            int qlen = strlen(q);
-                            memcpy(p, q, qlen);
-                            p += qlen;
-                            memcpy(p, sel_nl, sizeof(sel_nl));
-                            p += sizeof(sel_nl);
-                        }
-                        write_aclip(CLIP_SYSTEM, clipdata, size, true);
-                        sfree(clipdata);
+                    strbuf *sb = strbuf_new();
+                    for (int i = 0; i < count; i++) {
+                        char *q = getevent(selitems[i]);
+                        put_datapl(sb, ptrlen_from_asciz(q));
+                        put_data(sb, sel_nl, sizeof(sel_nl));
                     }
+                    write_aclip(hwnd, CLIP_SYSTEM, sb->s, sb->len);
+                    strbuf_free(sb);
                     sfree(selitems);
 
                     for (i = 0; i < (ninitial + ncircular); i++)
@@ -390,9 +420,10 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
         char *text = dupprintf(
             "%s\r\n\r\n%s\r\n\r\n%s\r\n\r\n%s",
             appname, ver, buildinfo_text,
-            "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved.");
+            "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved."
+        );
         sfree(buildinfo_text);
-        SetDlgItemText(hwnd, IDA_TEXT, text);
+        SetDlgItemTextCp1252(hwnd, IDA_TEXT, text);
         MakeDlgItemBorderless(hwnd, IDA_TEXT);
         sfree(text);
         l10n_created_window(hwnd);
@@ -470,14 +501,14 @@ static HTREEITEM treeview_insert(struct treeview_faff *faff,
     sfree (ins.INSITEM.pszText);
     if (level > 0)
         TreeView_Expand(faff->treeview, faff->lastat[level - 1],
-                        (level > 1 ? TVE_COLLAPSE : TVE_EXPAND));
+                        (level > 1 && strncmp(path, "Connection/SSH", 14) ? TVE_COLLAPSE : TVE_EXPAND));
     faff->lastat[level] = newitem;
     for (i = level + 1; i < 4; i++)
         faff->lastat[i] = NULL;
     return newitem;
 }
 
-const char *dialog_box_demo_screenshot_filename = NULL;
+Filename *dialog_box_demo_screenshot_filename = NULL;
 
 /* ctrltrees indices for the main dialog box */
 enum {
@@ -495,6 +526,7 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
 {
     PortableDialogStuff *pds = (PortableDialogStuff *)ctx;
     const int DEMO_SCREENSHOT_TIMER_ID = 1230;
+    const int PANEL_CHANGED_TIMER_ID = 1231;
     HWND treeview;
     struct treeview_faff tvfaff;
 
@@ -534,7 +566,7 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
             r.left = 3;
             r.right = r.left + 95;
             r.top = 13;
-            r.bottom = r.top + 219;
+            r.bottom = r.top + 235+24-1;
             MapDialogRect(hwnd, &r);
             treeview = CreateWindowEx(WS_EX_CLIENTEDGE, WC_TREEVIEW, "",
                                       WS_CHILD | WS_VISIBLE |
@@ -634,27 +666,16 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                 sfree(err);
             }
             ShinyEndDialog(hwnd, 0);
-        }
-        return 0;
+        } else if (wParam == PANEL_CHANGED_TIMER_ID) {
+            KillTimer(hwnd, PANEL_CHANGED_TIMER_ID);
+            treeview = GetDlgItem(hwnd, IDCX_TREEVIEW);
+            if (!treeview) return 0;
 
-      case WM_NOTIFY:
-        if (LOWORD(wParam) == IDCX_TREEVIEW &&
-            ((LPNMHDR) lParam)->code == TVN_SELCHANGED) {
-            /*
-             * Selection-change events on the treeview cause us to do
-             * a flurry of control deletion and creation - but only
-             * after WM_INITDIALOG has finished. The initial
-             * selection-change event(s) during treeview setup are
-             * ignored.
-             */
             HTREEITEM i;
             TVITEM item;
             char buffer[64];
 
-            if (!pds->initialised)
-                return 0;
-
-            i = TreeView_GetSelection(((LPNMHDR) lParam)->hwndFrom);
+            i = TreeView_GetSelection(treeview);
 
             SendMessage (hwnd, WM_SETREDRAW, false, 0);
 
@@ -662,7 +683,7 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
             item.pszText = buffer;
             item.cchTextMax = sizeof(buffer);
             item.mask = TVIF_TEXT | TVIF_PARAM;
-            TreeView_GetItem(((LPNMHDR) lParam)->hwndFrom, &item);
+            TreeView_GetItem(treeview, &item);
             {
                 /* Destroy all controls in the currently visible panel. */
                 int k;
@@ -678,8 +699,7 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                     }
                     winctrl_rem_shortcuts(pds->dp, c);
                     winctrl_remove(&pds->ctrltrees[TREE_PANEL], c);
-                    sfree(c->data);
-                    sfree(c);
+                    winctrl_free(c);
                 }
             }
             pds_create_controls(pds, TREE_PANEL, IDCX_PANELBASE,
@@ -688,9 +708,33 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
             dlg_refresh(NULL, pds->dp);    /* set up control values */
 
             SendMessage (hwnd, WM_SETREDRAW, true, 0);
-            InvalidateRect (hwnd, NULL, true);
+            // invalidate right panel area.
+            RECT wr, cr[2];
+            GetClientRect(hwnd, &wr);
+            GetWindowRect(treeview, &cr[0]);
+            GetWindowRect(GetDlgItem(hwnd, IDCX_STDBASE), &cr[1]);
+            MapWindowPoints(NULL, hwnd, (POINT *)cr, 4);
+            wr.left = cr[0].right + 1;
+            wr.bottom = cr[1].top;
+            InvalidateRect(hwnd, &wr, true);
 
-            SetFocus(((LPNMHDR) lParam)->hwndFrom);     /* ensure focus stays */
+            SetFocus(treeview);     /* ensure focus stays */
+        }
+        return 0;
+
+      case WM_NOTIFY:
+        if (LOWORD(wParam) == IDCX_TREEVIEW &&
+            ((LPNMHDR) lParam)->code == TVN_SELCHANGED) {
+            /*
+             * Selection-change events on the treeview cause us to do
+             * a flurry of control deletion and creation - but only
+             * after WM_INITDIALOG has finished. The initial
+             * selection-change event(s) during treeview setup are
+             * ignored.
+             */
+            if (!pds->initialised)
+                return 0;
+            SetTimer(hwnd, PANEL_CHANGED_TIMER_ID, 10, NULL);
         }
         return 0;
 
@@ -723,7 +767,6 @@ void defuse_showwindow(void)
         HWND hwnd;
         hwnd = CreateDialog(hinst, MAKEINTRESOURCE(IDD_ABOUTBOX),
                             NULL, NullDlgProc);
-        l10n_created_window(hwnd);
         ShowWindow(hwnd, SW_HIDE);
         SetActiveWindow(hwnd);
         DestroyWindow(hwnd);
@@ -769,6 +812,7 @@ bool do_reconfig(HWND hwnd, Conf *conf, int protcfginfo)
 
     pds->dp->wintitle = dupprintf("%s Reconfiguration", appname);
     pds->dp->data = conf;
+    pds->dp->term_hwnd = hwnd;
 
     dlg_auto_set_fixed_pitch_flag(pds->dp);
 
@@ -810,6 +854,8 @@ static void win_gui_eventlog(LogPolicy *lp, const char *string)
                            0, (LPARAM) *location);
         count = SendDlgItemMessage(logbox, IDN_LIST, LB_GETCOUNT, 0, 0);
         SendDlgItemMessage(logbox, IDN_LIST, LB_SETTOPINDEX, count - 1, 0);
+
+        update_logbox_horizontal_extent(logbox);
     }
     if (ninitial < LOGEVENT_INITIAL_MAX) {
         ninitial++;
@@ -1181,7 +1227,7 @@ SeatPromptResult win_seat_confirm_ssh_host_key(
         wgs->term_hwnd, HostKeyDialogProc, ctx);
     assert(mbret==IDC_HK_ACCEPT || mbret==IDC_HK_ONCE || mbret==IDCANCEL);
     if (mbret == IDC_HK_ACCEPT) {
-        store_host_key(host, port, keytype, keystr);
+        store_host_key(seat, host, port, keytype, keystr);
         return SPR_OK;
     } else if (mbret == IDC_HK_ONCE) {
         return SPR_OK;
@@ -1249,11 +1295,12 @@ static int win_gui_askappend(LogPolicy *lp, Filename *filename,
     char *mbtitle;
     int mbret;
 
-    message = dupprintf(msgtemplate, FILENAME_MAX, filename->path);
+    message = dupprintf(msgtemplate, FILENAME_MAX, filename->utf8path);
     mbtitle = dupprintf("%s Log to File", appname);
 
-    mbret = MessageBox(NULL, message, mbtitle,
-                       MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON3);
+    mbret = message_box(NULL, message, mbtitle,
+                        MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON3,
+                        true, 0);
 
     socket_reselect_all();
 

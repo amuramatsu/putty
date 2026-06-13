@@ -21,6 +21,7 @@
 #include "ini.h"
 #include "pageant-rc.h"
 #include "platform.h"
+#include "winl10n.h"
 
 #include <shellapi.h>
 
@@ -38,6 +39,8 @@
 #define TID_REENCRYPT_TIMEOUT   502
 
 #define APPNAME "Pageant"
+
+const char *const appname = APPNAME;
 
 /* Titles and class names for invisible windows. IPCWINTITLE and
  * IPCCLASSNAME are critical to backwards compatibility: WM_COPYDATA
@@ -64,9 +67,10 @@ static struct {
 } reencrypt_settings;
 static char *putty_path;
 static bool restrict_putty_acl = false;
+static bool cmd_confirm_open;
 
 /* CWD for "add key" file requester. */
-static filereq *keypath = NULL;
+static filereq_saved_dir *keypath = NULL;
 
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
@@ -162,7 +166,7 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
             ver, buildinfo_text,
             "\251 " SHORT_COPYRIGHT_DETAILS ". All rights reserved.");
         sfree(buildinfo_text);
-        SetDlgItemText(hwnd, IDC_ABOUT_TEXTBOX, text);
+        SetDlgItemTextCp1252(hwnd, IDC_ABOUT_TEXTBOX, text);
         MakeDlgItemBorderless(hwnd, IDC_ABOUT_TEXTBOX);
         sfree(text);
         return 1;
@@ -565,7 +569,7 @@ static void win_add_keyfile(Filename *filename, bool encrypted)
     }
 
   error:
-    message_box(traywindow, err, APPNAME, MB_OK | MB_ICONERROR,
+    message_box(traywindow, err, APPNAME, MB_OK | MB_ICONERROR, false,
                 HELPCTXID(errors_cantloadkey));
   done:
     sfree(err);
@@ -577,72 +581,21 @@ static void win_add_keyfile(Filename *filename, bool encrypted)
  */
 static void prompt_add_keyfile(bool encrypted)
 {
-    OPENFILENAME of;
-    char *filelist = snewn(8192, char);
+    if (!keypath)
+        keypath = filereq_saved_dir_new();
 
-    if (!keypath) keypath = filereq_new();
-    memset(&of, 0, sizeof(of));
-    of.hwndOwner = traywindow;
-    of.lpstrFilter = FILTER_KEY_FILES;
-    of.lpstrCustomFilter = NULL;
-    of.nFilterIndex = 1;
-    of.lpstrFile = filelist;
-    *filelist = '\0';
-    of.nMaxFile = 8192;
-    of.lpstrFileTitle = NULL;
-    of.lpstrTitle = "Select Private Key File";
-    of.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER;
-    if (request_file(keypath, &of, true, false)) {
-        if(strlen(filelist) > of.nFileOffset) {
-            /* Only one filename returned? */
-            Filename *fn = filename_from_str(filelist);
-            win_add_keyfile(fn, encrypted);
-            filename_free(fn);
-        } else {
-            /* we are returned a bunch of strings, end to
-             * end. first string is the directory, the
-             * rest the filenames. terminated with an
-             * empty string.
-             */
-            char *dir = filelist;
-            char *filewalker = filelist + strlen(dir) + 1;
-            while (*filewalker != '\0') {
-                char *filename = dupcat(dir, "\\", filewalker);
-                Filename *fn = filename_from_str(filename);
-                win_add_keyfile(fn, encrypted);
-                filename_free(fn);
-                sfree(filename);
-                filewalker += strlen(filewalker) + 1;
-            }
-        }
+    struct request_multi_file_return *rmf = request_multi_file(
+        traywindow, "Select Private Key File", NULL, false,
+        keypath, true, FILTER_KEY_FILES);
+
+    if (rmf) {
+        for (size_t i = 0; i < rmf->nfilenames; i++)
+            win_add_keyfile(rmf->filenames[i], encrypted);
+        request_multi_file_free(rmf);
 
         keylist_update();
         pageant_forget_passphrases();
     }
-    sfree(filelist);
-}
-
-static int app_conf_get_int(const char *name, int def, int min, int max)
-{
-    int value = def;
-    if (get_use_inifile()) {
-        if (!get_ini_int(APPNAME, name, inifile, &value))
-            value = def;
-    } else {
-        HKEY hkey = open_regkey_ro(HKEY_CURRENT_USER, PUTTY_REG_POS "\\" APPNAME);
-        if (hkey) {
-            DWORD dw;
-            if (get_reg_dword(hkey, name, &dw))
-                value = dw;
-            else
-                value = def;
-            close_regkey(hkey);
-        }
-    }
-    if (value < min || max < value) {
-        value = def;
-    }
-    return value;
 }
 
 struct ConfirmAcceptAgentProcStruct {
@@ -885,9 +838,9 @@ static void defer_reencrypt(bool flag)
 int accept_agent_request(int type, const RSAKey *rsaKey, const ssh2_userkey *ssh2UserKey)
 {
     int result;
-    defer_reencrypt(1);
+    defer_reencrypt(true);
     result = do_accept_agent_request(type, rsaKey, ssh2UserKey);
-    defer_reencrypt(0);
+    defer_reencrypt(false);
     return result;
 }
 
@@ -1212,7 +1165,7 @@ static INT_PTR CALLBACK KeyListProc(HWND hwnd, UINT msg,
 
                 /* do the same for the rsa keys */
                 for (i = rCount - 1; (itemNum >= 0) && (i >= 0); i--) {
-                    if(selectedArray[itemNum] == i) {
+                    if (selectedArray[itemNum] == i) {
                         switch (LOWORD(wParam)) {
                           case IDC_KEYLIST_REMOVE:
                             pageant_delete_nth_ssh1_key(i);
@@ -1294,7 +1247,10 @@ static BOOL AddTrayIcon(HWND hwnd)
     tnid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     tnid.uCallbackMessage = WM_SYSTRAY;
     tnid.hIcon = hicon = LoadIcon(hinst, MAKEINTRESOURCE(201));
-    strcpy(tnid.szTip, "Pageant (PuTTY authentication agent)");
+    char buf[lenof(tnid.szTip)];
+    const char *tip_str = l10n_translate("Pageant (PuTTY authentication agent)", buf);
+    strncpy(tnid.szTip, tip_str, lenof(tnid.szTip));
+    tnid.szTip[lenof(tnid.szTip) - 1] = '\0';
 
     res = Shell_NotifyIcon(NIM_ADD, &tnid);
     if (!res)
@@ -1357,10 +1313,10 @@ static void update_sessions(void)
         return;
     }
 
-    if(ERROR_SUCCESS != RegOpenKey(HKEY_CURRENT_USER, PUTTY_REGKEY, &hkey))
+    if (ERROR_SUCCESS != RegOpenKey(HKEY_CURRENT_USER, PUTTY_REGKEY, &hkey))
         return;
 
-    for(num_entries = GetMenuItemCount(session_menu);
+    for (num_entries = GetMenuItemCount(session_menu);
         num_entries > initial_menuitems_count;
         num_entries--)
         RemoveMenu(session_menu, 0, MF_BYPOSITION);
@@ -1369,8 +1325,8 @@ static void update_sessions(void)
     index_menu = 0;
 
     sb = strbuf_new();
-    while(ERROR_SUCCESS == RegEnumKey(hkey, index_key, buf, MAX_PATH)) {
-        if(strcmp(buf, PUTTY_DEFAULT) != 0) {
+    while (ERROR_SUCCESS == RegEnumKey(hkey, index_key, buf, MAX_PATH)) {
+        if (strcmp(buf, PUTTY_DEFAULT) != 0) {
             strbuf_clear(sb);
             unescape_registry_key(buf, sb);
 
@@ -1390,7 +1346,7 @@ static void update_sessions(void)
 
     RegCloseKey(hkey);
 
-    if(index_menu == 0) {
+    if (index_menu == 0) {
         mii.cbSize = sizeof(mii);
         mii.fMask = MIIM_TYPE | MIIM_STATE;
         mii.fType = MFT_STRING;
@@ -1773,8 +1729,8 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
             if (restrict_putty_acl)
                 strcat(cmdline, "&R");
 
-            if((INT_PTR)ShellExecute(hwnd, NULL, putty_path, cmdline,
-                                     _T(""), SW_SHOW) <= 32) {
+            if ((INT_PTR)ShellExecute(hwnd, NULL, putty_path, cmdline,
+                                      _T(""), SW_SHOW) <= 32) {
                 MessageBox(hwnd, "Unable to execute PuTTY!",
                            "Error", MB_OK | MB_ICONERROR);
             }
@@ -1807,10 +1763,19 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
             }
             prompt_add_keyfile(command == IDM_ADDKEY_ENCRYPTED);
             break;
-          case IDM_REMOVE_ALL:
+          case IDM_REMOVE_ALL: {
+            if (cmd_confirm_open)
+                break;
+            cmd_confirm_open = true;
+            int result = MessageBox(hwnd, "Remove all keys from the list?",
+                APPNAME, MB_YESNO | MB_SYSTEMMODAL);
+            cmd_confirm_open = false;
+            if (result != IDYES)
+                break;
             pageant_delete_all();
             keylist_update();
             break;
+          }
           case IDM_REENCRYPT_ALL:
             gui_reencrypt_all();
             break;
@@ -1840,7 +1805,7 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
             }
             break;
           default: {
-            if(wParam >= IDM_SESSIONS_BASE && wParam <= IDM_SESSIONS_MAX) {
+            if (wParam >= IDM_SESSIONS_BASE && wParam <= IDM_SESSIONS_MAX) {
                 MENUITEMINFO mii;
                 TCHAR buf[MAX_PATH + 1];
                 TCHAR param[MAX_PATH + 1];
@@ -1855,8 +1820,8 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
                     strcat(param, "&R");
                 strcat(param, "@");
                 strcat(param, mii.dwTypeData);
-                if((INT_PTR)ShellExecute(hwnd, NULL, putty_path, param,
-                                         _T(""), SW_SHOW) <= 32) {
+                if ((INT_PTR)ShellExecute(hwnd, NULL, putty_path, param,
+                                          _T(""), SW_SHOW) <= 32) {
                     MessageBox(hwnd, "Unable to execute PuTTY!", "Error",
                                MB_OK | MB_ICONERROR);
                 }
@@ -1867,7 +1832,8 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT message,
         break;
       }
       case WM_NETEVENT:
-        winselgui_response(wParam, lParam);
+      case WM_DONE_WITH_SOCKET:
+        winselgui_response(message, wParam, lParam);
         return 0;
       case WM_DESTROY:
         quit_help(hwnd);
@@ -2041,9 +2007,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     const char *command = NULL;
     const char *unixsocket = NULL;
     bool show_keylist_on_startup = false;
-    int argc;
-    char **argv, **argstart;
-    const char *openssh_config_file = NULL;
+    Filename *openssh_config_file = NULL;
 
     typedef struct CommandLineKey {
         Filename *fn;
@@ -2054,6 +2018,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     size_t nclkeys = 0, clkeysize = 0;
 
     dll_hijacking_protection();
+    enable_dit();
 
     hinst = inst;
 
@@ -2069,6 +2034,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             return 1;
         }
     }
+    disable_timer_ex_suppression(load_system32_dll("user32.dll"));
 
     /*
      * See if we can find our Help file.
@@ -2102,32 +2068,30 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
      * started up the main agent. Details of keys to be added are
      * stored in the 'clkeys' array.
      */
-    split_into_argv(cmdline, &argc, &argv, &argstart);
 
-    process_ini_option(&argc, &argv, 0, opt_error);
-
+    process_ini_option(opt_error);
     confirm_any_request = (bool)app_conf_get_int("ConfirmAnyRequest", 0, 0, 1);
     bool add_keys_encrypted = false;
-    AuxMatchOpt amo = aux_match_opt_init(argc, argv, 0, opt_error);
+    AuxMatchOpt amo = aux_match_opt_init(opt_error);
     while (!aux_match_done(&amo)) {
-        char *val;
+        CmdlineArg *valarg;
         #define match_opt(...) aux_match_opt( \
             &amo, NULL, __VA_ARGS__, (const char *)NULL)
         #define match_optval(...) aux_match_opt( \
-            &amo, &val, __VA_ARGS__, (const char *)NULL)
+            &amo, &valarg, __VA_ARGS__, (const char *)NULL)
 
-        if (aux_match_arg(&amo, &val)) {
+        if (aux_match_arg(&amo, &valarg)) {
             /*
              * Non-option arguments are expected to be key files, and
              * added to clkeys.
              */
             sgrowarray(clkeys, clkeysize, nclkeys);
             CommandLineKey *clkey = &clkeys[nclkeys++];
-            clkey->fn = filename_from_str(val);
+            clkey->fn = cmdline_arg_to_filename(valarg);
             clkey->add_encrypted = add_keys_encrypted;
         } else if (match_opt("-pgpfp")) {
             pgp_fingerprints_msgbox(NULL);
-            return 1;
+            return 0;
         } else if (match_opt("-restrict-acl", "-restrict_acl",
                              "-restrictacl")) {
             restrict_process_acl();
@@ -2139,30 +2103,38 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         } else if (match_opt("-keylist")) {
             show_keylist_on_startup = true;
         } else if (match_optval("-openssh-config", "-openssh_config")) {
-            openssh_config_file = val;
+            openssh_config_file = cmdline_arg_to_filename(valarg);
         } else if (match_opt("-confirm")) {
             confirm_any_request = true;
         } else if (match_opt("-no-confirm", "-no_confirm", "-noconfirm")) {
             confirm_any_request = false;
         } else if (match_optval("-reencrypt-on", "-reencrypt_on")) {
-            char *error = parse_reencrypt_settings(val);
+            char *error = parse_reencrypt_settings(cmdline_arg_to_str(valarg));
             if (error) {
                 opt_error("%s", error);
             }
         } else if (match_optval("-unix")) {
-            unixsocket = val;
+            /* UNICODE: should this be a Unicode filename? Is there a
+             * Unicode version of connect() that lets you give a
+             * Unicode pathname when making an AF_UNIX socket? */
+            unixsocket = cmdline_arg_to_str(valarg);
         } else if (match_opt("-c")) {
             /*
              * If we see `-c', then the rest of the command line
              * should be treated as a command to be spawned.
              */
-            if (amo.index < amo.argc)
-                command = argstart[amo.index];
-            else
+            if (amo.arglist->args[amo.index]) {
+                /* UNICODE: should use the UTF-8 or wide version, and
+                 * CreateProcessW, to pass through arbitrary command lines */
+                command = cmdline_arg_remainder_acp(
+                    amo.arglist->args[amo.index]);
+            } else {
                 command = "";
+            }
             break;
         } else {
-            opt_error("unrecognised option '%s'\n", amo.argv[amo.index]);
+            opt_error("unrecognised option '%s'\n",
+                      cmdline_arg_to_str(amo.arglist->args[amo.index]));
         }
     }
 
@@ -2250,10 +2222,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
              * pointing at the named pipe, do so.
              */
             if (openssh_config_file) {
-                FILE *fp = fopen(openssh_config_file, "w");
+                FILE *fp = f_open(openssh_config_file, "w", true);
                 if (!fp) {
-                    char *err = dupprintf("Unable to write OpenSSH config "
-                                          "file to %s", openssh_config_file);
+                    char *err = dupprintf(
+                        "Unable to write OpenSSH config file to %s",
+                        filename_to_str(openssh_config_file));
                     MessageBox(NULL, err, "Pageant Error",
                                MB_ICONERROR | MB_OK);
                     return 1;
@@ -2473,14 +2446,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         DestroyMenu(systray_menu);
     }
 
-    if (keypath) filereq_free(keypath);
+    if (keypath)
+        filereq_saved_dir_free(keypath);
 
     if (openssh_config_file) {
         /*
          * Leave this file around, but empty it, so that it doesn't
          * refer to a pipe we aren't listening on any more.
          */
-        FILE *fp = fopen(openssh_config_file, "w");
+        FILE *fp = f_open(openssh_config_file, "w", true);
         if (fp)
             fclose(fp);
     }

@@ -4,6 +4,7 @@
  */
 
 #include <assert.h>
+#include <math.h>
 #include <stdlib.h>
 
 #include "putty.h"
@@ -122,11 +123,19 @@ void conf_editbox_handler(dlgcontrol *ctrl, dlgparam *dlg,
 
     if (type->type == EDIT_STR) {
         if (event == EVENT_REFRESH) {
-            char *field = conf_get_str(conf, key);
-            dlg_editbox_set(ctrl, dlg, field);
+            bool utf8;
+            char *field = conf_get_str_ambi(conf, key, &utf8);
+            if (utf8)
+                dlg_editbox_set_utf8(ctrl, dlg, field);
+            else
+                dlg_editbox_set(ctrl, dlg, field);
         } else if (event == EVENT_VALCHANGE) {
-            char *field = dlg_editbox_get(ctrl, dlg);
-            conf_set_str(conf, key, field);
+            char *field = dlg_editbox_get_utf8(ctrl, dlg);
+            if (!conf_try_set_utf8(conf, key, field)) {
+                sfree(field);
+                field = dlg_editbox_get(ctrl, dlg);
+                conf_set_str(conf, key, field);
+            }
             sfree(field);
         }
     } else {
@@ -143,7 +152,7 @@ void conf_editbox_handler(dlgcontrol *ctrl, dlgparam *dlg,
             if (type->type == EDIT_INT)
                 conf_set_int(conf, key, atoi(str));
             else
-                conf_set_int(conf, key, (int)(type->denominator * atof(str)));
+                conf_set_int(conf, key, (int)round(type->denominator * atof(str)));
             sfree(str);
         }
     }
@@ -570,6 +579,8 @@ static void kexlist_handler(dlgcontrol *ctrl, dlgparam *dlg,
             { "RSA-based key exchange",             KEX_RSA },
             { "ECDH key exchange",                  KEX_ECDH },
             { "NTRU Prime / Curve25519 hybrid kex", KEX_NTRU_HYBRID },
+            { "ML-KEM / Curve25519 hybrid kex",     KEX_MLKEM_25519_HYBRID },
+            { "ML-KEM / NIST ECDH hybrid kex",      KEX_MLKEM_NIST_HYBRID },
             { "-- warn below here --",              KEX_WARN }
         };
 
@@ -689,21 +700,27 @@ static void codepage_handler(dlgcontrol *ctrl, dlgparam *dlg,
         int i;
         const char *cp, *thiscp;
         dlg_update_start(ctrl, dlg);
-        thiscp = conf_get_str(conf, CONF_line_codepage);
-        if (decode_codepage (thiscp) != CP_UTF8 || iso2022_init_test (thiscp))
-        thiscp = cp_name(decode_codepage(thiscp));
+        char *thiscp_t = thiscp = conf_get_str(conf, CONF_line_codepage);
+        char t_buf[128];
+        if (decode_codepage(thiscp) != CP_UTF8 || iso2022_init_test(thiscp)) {
+            thiscp = cp_name(decode_codepage(thiscp));
+            thiscp_t = l10n_translate(thiscp, t_buf);
+        }
         dlg_listbox_clear(ctrl, dlg);
         for (i = 0; (cp = cp_enumerate(i)) != NULL; i++)
             dlg_listbox_add(ctrl, dlg, cp);
-        dlg_editbox_set(ctrl, dlg, thiscp);
+        dlg_editbox_set(ctrl, dlg, thiscp_t);
         conf_set_str(conf, CONF_line_codepage, thiscp);
         dlg_update_done(ctrl, dlg);
     } else if (event == EVENT_VALCHANGE) {
         char *codepage = dlg_editbox_get(ctrl, dlg);
         conf_set_str(conf, CONF_line_codepage, codepage);
-        if (decode_codepage (codepage) != CP_UTF8 || iso2022_init_test (codepage))
-        conf_set_str(conf, CONF_line_codepage,
-                     cp_name(decode_codepage(codepage)));
+        extern const char *l10n_get_codepage_orig_name(const char *cp_name);
+        const char *codepage_orig = l10n_get_codepage_orig_name(codepage);
+        if (codepage_orig) codepage = NULL;
+        else codepage_orig = codepage;
+        if (decode_codepage(codepage_orig) != CP_UTF8 || iso2022_init_test(codepage_orig))
+            conf_set_str(conf, CONF_line_codepage, cp_name(decode_codepage(codepage_orig)));
         sfree(codepage);
     }
 }
@@ -1000,7 +1017,21 @@ static void charclass_handler(dlgcontrol *ctrl, dlgparam *dlg,
 
 struct colour_data {
     dlgcontrol *listbox, *redit, *gedit, *bedit, *button;
+    int8_t colourspace;
+    int8_t no_update;
 };
+
+bool colour_control_override(dlgcontrol *listbox, dlgcontrol *target_ctrl, dlgcontrol *new_ctrl)
+{
+    struct colour_data *cd = (struct colour_data *)listbox->context.p;
+    if (cd->listbox == target_ctrl) cd->listbox = new_ctrl;
+    else if (cd->redit == target_ctrl) cd->redit = new_ctrl;
+    else if (cd->gedit == target_ctrl) cd->gedit = new_ctrl;
+    else if (cd->bedit == target_ctrl) cd->bedit = new_ctrl;
+    else if (cd->button == target_ctrl) cd->button = new_ctrl;
+    else return false;
+    return true;
+}
 
 /* Array of the user-visible colour names defined in the list macro in
  * putty.h */
@@ -1010,6 +1041,94 @@ static const char *const colours[] = {
     #undef CONF_COLOUR_NAME_DECL
 };
 
+enum {
+    COLOURSPACE_RGB = 0,
+    COLOURSPACE_HSL,
+};
+
+typedef union {
+    struct {
+        int r, g, b;
+    } rgb;
+    struct {
+        float h, s, l;
+    } hsl;
+} any_colour_value;
+
+#include "utils/colourspace.h"
+
+static void format_float_trim(char *str, float value)
+{
+    int len = sprintf(str, "%.1f", value);
+    if (len < 2) return;
+    if (str[len - 2] == '.' && str[len - 1] == '0') str[len - 2] = '\0';
+}
+
+static void apply_colour_to_dialog(dlgparam *dp, struct colour_data *cd, any_colour_value *ac)
+{
+    char buf[40];
+    cd->no_update++;
+    if (ac == NULL) {
+        dlg_editbox_set(cd->redit, dp, "");
+        dlg_editbox_set(cd->gedit, dp, "");
+        dlg_editbox_set(cd->bedit, dp, "");
+    } else if (cd->colourspace == COLOURSPACE_RGB) {
+        sprintf(buf, "%d", ac->rgb.r); dlg_editbox_set(cd->redit, dp, buf);
+        sprintf(buf, "%d", ac->rgb.g); dlg_editbox_set(cd->gedit, dp, buf);
+        sprintf(buf, "%d", ac->rgb.b); dlg_editbox_set(cd->bedit, dp, buf);
+    } else {
+        // clamp, just in case
+        format_float_trim(buf, fmodf(ac->hsl.h, 360.0f)); dlg_editbox_set(cd->redit, dp, buf);
+        format_float_trim(buf, fclampf(ac->hsl.s, 0, 1.0f) * 100.0f); dlg_editbox_set(cd->gedit, dp, buf);
+        format_float_trim(buf, fclampf(ac->hsl.l, 0, 1.0f) * 100.0f); dlg_editbox_set(cd->bedit, dp, buf);
+    }
+    cd->no_update--;
+}
+
+static void load_conf_colour(int colourspace, any_colour_value *ac, Conf *conf, int base)
+{
+    int r = conf_get_int_int(conf, CONF_colours, base*3+0);
+    int g = conf_get_int_int(conf, CONF_colours, base*3+1);
+    int b = conf_get_int_int(conf, CONF_colours, base*3+2);
+    if (colourspace == COLOURSPACE_RGB) {
+        ac->rgb.r = r;
+        ac->rgb.g = g;
+        ac->rgb.b = b;
+    } else
+        rgb8_to_hsl(r, g, b, &ac->hsl.h, &ac->hsl.s, &ac->hsl.l);
+}
+
+static void colourspace_handler(dlgcontrol *ctrl, dlgparam *dp, void *data, int event)
+{
+    struct colour_data *cd = (struct colour_data *)ctrl->context.p;
+    int button;
+    Conf *conf = (Conf *)data;
+    bool update = false;
+    if (event == EVENT_REFRESH) {
+        for (button = 0; button < ctrl->radio.nbuttons; button++)
+            if (cd->colourspace == ctrl->radio.buttondata[button].i)
+                break;
+        if (button >= ctrl->radio.nbuttons) button = COLOURSPACE_RGB;
+        dlg_radiobutton_set(ctrl, dp, button);
+        update = true;
+    } else if (event == EVENT_VALCHANGE) {
+        cd->colourspace = dlg_radiobutton_get(ctrl, dp);
+        update = true;
+    }
+    if (update) {
+        bool is_rgb = cd->colourspace == COLOURSPACE_RGB;
+        dlg_label_change(cd->redit, dp, is_rgb ? "Red" : "Hue");
+        dlg_label_change(cd->gedit, dp, is_rgb ? "Green" : "Satul.");
+        dlg_label_change(cd->bedit, dp, is_rgb ? "Blue" : "Light.");
+        int i = dlg_listbox_index(cd->listbox, dp);
+        if (i >= 0) {
+            any_colour_value ac;
+            load_conf_colour(cd->colourspace, &ac, conf, i);
+            apply_colour_to_dialog(dp, cd, &ac);
+        }
+    }
+}
+
 static void colour_handler(dlgcontrol *ctrl, dlgparam *dlg,
                             void *data, int event)
 {
@@ -1017,7 +1136,7 @@ static void colour_handler(dlgcontrol *ctrl, dlgparam *dlg,
     struct colour_data *cd =
         (struct colour_data *)ctrl->context.p;
     bool update = false, clear = false;
-    int r, g, b;
+    any_colour_value ac;
 
     if (event == EVENT_REFRESH) {
         if (ctrl == cd->listbox) {
@@ -1027,7 +1146,7 @@ static void colour_handler(dlgcontrol *ctrl, dlgparam *dlg,
             for (i = 0; i < lenof(colours); i++)
                 dlg_listbox_add(ctrl, dlg, colours[i]);
             dlg_update_done(ctrl, dlg);
-            clear = true;
+            dlg_listbox_select(ctrl, dlg, 0);
             update = true;
         }
     } else if (event == EVENT_SELCHANGE) {
@@ -1038,32 +1157,42 @@ static void colour_handler(dlgcontrol *ctrl, dlgparam *dlg,
                 clear = true;
             } else {
                 clear = false;
-                r = conf_get_int_int(conf, CONF_colours, i*3+0);
-                g = conf_get_int_int(conf, CONF_colours, i*3+1);
-                b = conf_get_int_int(conf, CONF_colours, i*3+2);
+                load_conf_colour(cd->colourspace, &ac, conf, i);
             }
             update = true;
         }
     } else if (event == EVENT_VALCHANGE) {
-        if (ctrl == cd->redit || ctrl == cd->gedit || ctrl == cd->bedit) {
+        if (!cd->no_update && (ctrl == cd->redit || ctrl == cd->gedit || ctrl == cd->bedit)) {
             /* The user has changed the colour using the edit boxes. */
-            char *str;
-            int i, cval;
-
-            str = dlg_editbox_get(ctrl, dlg);
-            cval = atoi(str);
-            sfree(str);
-            if (cval > 255) cval = 255;
-            if (cval < 0)   cval = 0;
-
-            i = dlg_listbox_index(cd->listbox, dlg);
+            int i = dlg_listbox_index(cd->listbox, dlg);
             if (i >= 0) {
-                if (ctrl == cd->redit)
-                    conf_set_int_int(conf, CONF_colours, i*3+0, cval);
-                else if (ctrl == cd->gedit)
-                    conf_set_int_int(conf, CONF_colours, i*3+1, cval);
-                else if (ctrl == cd->bedit)
-                    conf_set_int_int(conf, CONF_colours, i*3+2, cval);
+                char *str;
+                if (cd->colourspace == COLOURSPACE_RGB) {
+                    int cval;
+
+                    str = dlg_editbox_get(ctrl, dlg);
+                    cval = atoi(str);
+                    sfree(str);
+                    if (cval > 255) cval = 255;
+                    if (cval < 0)   cval = 0;
+
+                    if (ctrl == cd->redit)
+                        conf_set_int_int(conf, CONF_colours, i*3+0, cval);
+                    else if (ctrl == cd->gedit)
+                        conf_set_int_int(conf, CONF_colours, i*3+1, cval);
+                    else if (ctrl == cd->bedit)
+                        conf_set_int_int(conf, CONF_colours, i*3+2, cval);
+                } else {
+                    float h, s, l;
+                    str = dlg_editbox_get(cd->redit, dlg); h = strtof(str, NULL);
+                    str = dlg_editbox_get(cd->gedit, dlg); s = strtof(str, NULL) / 100.0f;
+                    str = dlg_editbox_get(cd->bedit, dlg); l = strtof(str, NULL) / 100.0f;
+                    int r, g, b;
+                    hsl_to_rgb8(h, s, l, &r, &g, &b);
+                    conf_set_int_int(conf, CONF_colours, i*3+0, r);
+                    conf_set_int_int(conf, CONF_colours, i*3+1, g);
+                    conf_set_int_int(conf, CONF_colours, i*3+2, b);
+                }
             }
         }
     } else if (event == EVENT_ACTION) {
@@ -1091,28 +1220,25 @@ static void colour_handler(dlgcontrol *ctrl, dlgparam *dlg,
              * return nonzero on success, or zero if the colour
              * selector did nothing (user hit Cancel, for example).
              */
+            int r, g, b;
             if (dlg_coloursel_results(ctrl, dlg, &r, &g, &b)) {
                 conf_set_int_int(conf, CONF_colours, i*3+0, r);
                 conf_set_int_int(conf, CONF_colours, i*3+1, g);
                 conf_set_int_int(conf, CONF_colours, i*3+2, b);
+                if (cd->colourspace == COLOURSPACE_RGB) {
+                    ac.rgb.r = r;
+                    ac.rgb.g = g;
+                    ac.rgb.b = b;
+                } else
+                    rgb8_to_hsl(r, g, b, &ac.hsl.h, &ac.hsl.s, &ac.hsl.l);
                 clear = false;
                 update = true;
             }
         }
     }
 
-    if (update) {
-        if (clear) {
-            dlg_editbox_set(cd->redit, dlg, "");
-            dlg_editbox_set(cd->gedit, dlg, "");
-            dlg_editbox_set(cd->bedit, dlg, "");
-        } else {
-            char buf[40];
-            sprintf(buf, "%d", r); dlg_editbox_set(cd->redit, dlg, buf);
-            sprintf(buf, "%d", g); dlg_editbox_set(cd->gedit, dlg, buf);
-            sprintf(buf, "%d", b); dlg_editbox_set(cd->bedit, dlg, buf);
-        }
-    }
+    if (update)
+        apply_colour_to_dialog(dlg, cd, clear ? NULL : &ac);
 }
 
 struct ttymodes_data {
@@ -1915,7 +2041,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
                                 HELPCTX(session_saved),
                                 sessionsaver_handler, P(ssd));
     ssd->listbox->column = 0;
-    ssd->listbox->listbox.height = 7;
+    ssd->listbox->listbox.height = 11;
     if (!midsession) {
         ssd->loadbutton = ctrl_pushbutton(s, "Load", 'l',
                                           HELPCTX(session_saved),
@@ -1984,7 +2110,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
                           sshrawlogname, 'r', I(LGTYP_SSHRAW));
     }
     ctrl_filesel(s, "Log file name:", 'f',
-                 NULL, true, "Select session log file name",
+                 FILTER_ALL_FILES, true, "Select session log file name",
                  HELPCTX(logging_filename),
                  conf_filesel_handler, I(CONF_logfilename));
     ctrl_text(s, "(Log file name can contain &Y, &M, &D for date,"
@@ -2200,6 +2326,9 @@ void setup_config_box(struct controlbox *b, bool midsession,
     ctrl_checkbox(s, "Disable bidirectional text display",
                   'd', HELPCTX(features_bidi), conf_checkbox_handler,
                   I(CONF_no_bidi));
+    ctrl_checkbox(s, "Disable bracketed paste mode",
+                  'p', HELPCTX(features_bracketed_paste), conf_checkbox_handler,
+                  I(CONF_no_bracketed_paste));
 
     /*
      * The Window panel.
@@ -2258,9 +2387,9 @@ void setup_config_box(struct controlbox *b, bool midsession,
                       HELPCTX(appearance_cursor),
                       conf_radiobutton_handler,
                       I(CONF_cursor_type),
-                      "Block", 'l', I(0),
-                      "Underline", 'u', I(1),
-                      "Vertical line", 'v', I(2));
+                      "Block", 'l', I(CURSOR_BLOCK),
+                      "Underline", 'u', I(CURSOR_UNDERLINE),
+                      "Vertical line", 'v', I(CURSOR_VERTICAL_LINE));
     ctrl_checkbox(s, "Cursor blinks", 'b',
                   HELPCTX(appearance_cursor),
                   conf_checkbox_handler, I(CONF_blink_cur));
@@ -2431,9 +2560,9 @@ void setup_config_box(struct controlbox *b, bool midsession,
     ctrl_radiobuttons(s, "Indicate bolded text by changing:", 'b', 3,
                       HELPCTX(colours_bold),
                       conf_radiobutton_handler, I(CONF_bold_style),
-                      "The font", I(1),
-                      "The colour", I(2),
-                      "Both", I(3));
+                      "The font", I(BOLD_STYLE_FONT),
+                      "The colour", I(BOLD_STYLE_COLOUR),
+                      "Both", I(BOLD_STYLE_FONT | BOLD_STYLE_COLOUR));
 
     str = dupprintf("Adjust the precise colours %s displays", appname);
     s = ctrl_getset(b, "Window/Colours", "adjust", str);
@@ -2446,8 +2575,10 @@ void setup_config_box(struct controlbox *b, bool midsession,
     cd->listbox = ctrl_listbox(s, "Select a colour to adjust:", 'u',
                                HELPCTX(colours_config), colour_handler, P(cd));
     cd->listbox->column = 0;
-    cd->listbox->listbox.height = 7;
-    c = ctrl_text(s, "RGB value:", HELPCTX(colours_config));
+    cd->listbox->listbox.height = 11;
+    c = ctrl_radiobuttons(s, NULL, NO_SHORTCUT, 2, HELPCTX(colours_config), colourspace_handler, P(cd),
+                          "RGB", NO_SHORTCUT, I(COLOURSPACE_RGB),
+                          "HSL", NO_SHORTCUT, I(COLOURSPACE_HSL));
     c->column = 1;
     cd->redit = ctrl_editbox(s, "Red", 'r', 50, HELPCTX(colours_config),
                              colour_handler, P(cd), P(NULL));
@@ -2461,6 +2592,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
     cd->button = ctrl_pushbutton(s, "Modify", 'm', HELPCTX(colours_config),
                                  colour_handler, P(cd));
     cd->button->column = 1;
+    cd->colourspace = COLOURSPACE_HSL;
     ctrl_columns(s, 1, 100);
 
     /*
@@ -2510,6 +2642,12 @@ void setup_config_box(struct controlbox *b, bool midsession,
                              HELPCTX(connection_loghost),
                              conf_editbox_handler, I(CONF_loghost), ED_STR);
             }
+
+            s = ctrl_getset(b, "Connection", "hooks",
+                            "Command to run at connection event");
+            ctrl_editbox(s, "Command to run before connection", 'b', 100,
+                         HELPCTX(connection_pre_hook),
+                         conf_editbox_handler, I(CONF_pre_connect_command), ED_STR);
         }
 
         /*
@@ -2574,7 +2712,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
             ed->listbox = ctrl_listbox(s, NULL, NO_SHORTCUT,
                                        HELPCTX(telnet_environ),
                                        environ_handler, P(ed));
-            ed->listbox->listbox.height = 3;
+            ed->listbox->listbox.height = 9;
             ed->listbox->listbox.ncols = 2;
             ed->listbox->listbox.percentages = snewn(2, int);
             ed->listbox->listbox.percentages[0] = 30;
@@ -2751,7 +2889,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
             c = ctrl_draglist(s, "Algorithm selection policy:", 's',
                               HELPCTX(ssh_kexlist),
                               kexlist_handler, P(NULL));
-            c->listbox.height = KEX_MAX;
+            c->listbox.height = 13;
 #ifndef NO_GSSAPI
             ctrl_checkbox(s, "Attempt GSSAPI key exchange",
                           'k', HELPCTX(ssh_gssapi),
@@ -2934,7 +3072,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
                          conf_filesel_handler, I(CONF_keyfile));
             ctrl_filesel(s, "Certificate to use with the private key "
                          "(optional):", 'e',
-                         NULL, false, "Select certificate file",
+                         FILTER_ALL_FILES, false, "Select certificate file",
                          HELPCTX(ssh_auth_cert),
                          conf_filesel_handler, I(CONF_detached_cert));
 
@@ -3024,7 +3162,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
             td->listbox = ctrl_listbox(s, NULL, NO_SHORTCUT,
                                        HELPCTX(ssh_ttymodes),
                                        ttymodes_handler, P(td));
-            td->listbox->listbox.height = 14;
+            td->listbox->listbox.height = 19;
             td->listbox->listbox.ncols = 2;
             td->listbox->listbox.percentages = snewn(2, int);
             td->listbox->listbox.percentages[0] = 40;
@@ -3109,7 +3247,7 @@ void setup_config_box(struct controlbox *b, bool midsession,
         pfd->listbox = ctrl_listbox(s, NULL, NO_SHORTCUT,
                                     HELPCTX(ssh_tunnels_portfwd),
                                     portfwd_handler, P(pfd));
-        pfd->listbox->listbox.height = 3;
+        pfd->listbox->listbox.height = 6;
         pfd->listbox->listbox.ncols = 2;
         pfd->listbox->listbox.percentages = snewn(2, int);
         pfd->listbox->listbox.percentages[0] = 20;

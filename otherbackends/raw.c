@@ -36,16 +36,20 @@ static void c_write(Raw *raw, const void *buf, size_t len)
     sk_set_frozen(raw->s, backlog > RAW_MAX_BACKLOG);
 }
 
-static void raw_log(Plug *plug, PlugLogType type, SockAddr *addr, int port,
-                    const char *error_msg, int error_code)
+static void raw_log(Plug *plug, Socket *s, PlugLogType type, SockAddr *addr,
+                    int port, const char *error_msg, int error_code)
 {
     Raw *raw = container_of(plug, Raw, plug);
-    backend_socket_log(raw->seat, raw->logctx, type, addr, port, error_msg,
-                       error_code, raw->conf, raw->socket_connected);
+    backend_socket_log(raw->seat, raw->logctx, s, type, addr, port,
+                       error_msg, error_code, raw->conf,
+                       raw->socket_connected);
     if (type == PLUGLOG_CONNECT_SUCCESS) {
         raw->socket_connected = true;
         if (raw->ldisc)
             ldisc_check_sendok(raw->ldisc);
+
+        /* No local authentication phase in this protocol */
+        seat_set_trust_status(raw->seat, false);
     }
 }
 
@@ -91,7 +95,7 @@ static void raw_closing(Plug *plug, PlugCloseType type, const char *error_msg)
             if (!raw->sent_socket_eof) {
                 if (raw->s)
                     sk_write_eof(raw->s);
-                raw->sent_socket_eof= true;
+                raw->sent_socket_eof = true;
             }
         }
         raw->sent_console_eof = true;
@@ -204,13 +208,11 @@ static char *raw_init(const BackendVtable *vt, Seat *seat,
     /*
      * Open socket.
      */
-    raw->s = new_connection(addr, *realhost, port, false, true, nodelay,
-                            keepalive, &raw->plug, conf, &raw->interactor);
+    raw->s = new_main_connection(
+        addr, *realhost, port, false, true, nodelay, keepalive, &raw->plug,
+        conf, &raw->interactor, raw->logctx);
     if ((err = sk_socket_error(raw->s)) != NULL)
         return dupstr(err);
-
-    /* No local authentication phase in this protocol */
-    seat_set_trust_status(raw->seat, false);
 
     loghost = conf_get_str(conf, CONF_loghost);
     if (*loghost) {
@@ -287,7 +289,7 @@ static void raw_special(Backend *be, SessionSpecialCode code, int arg)
     if (code == SS_EOF && raw->s) {
         if (!raw->sent_socket_eof)
             sk_write_eof(raw->s);
-        raw->sent_socket_eof= true;
+        raw->sent_socket_eof = true;
         raw_check_close(raw);
     }
 

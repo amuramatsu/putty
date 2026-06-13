@@ -251,10 +251,8 @@ static void ssh2_transport_free(PacketProtocolLayer *ppl)
     if (s->kex_shared_secret) strbuf_free(s->kex_shared_secret);
     if (s->dh_ctx)
         dh_cleanup(s->dh_ctx);
-    if (s->rsa_kex_key_needs_freeing) {
+    if (s->rsa_kex_key_needs_freeing)
         ssh_rsakex_freekey(s->rsa_kex_key);
-        sfree(s->rsa_kex_key);
-    }
     if (s->ecdh_key)
         ecdh_key_free(s->ecdh_key);
     if (s->exhash)
@@ -614,6 +612,14 @@ static void ssh2_write_kexinit_lists(
           case KEX_NTRU_HYBRID:
             preferred_kex[n_preferred_kex++] =
                 &ssh_ntru_hybrid_kex;
+            break;
+          case KEX_MLKEM_25519_HYBRID:
+            preferred_kex[n_preferred_kex++] =
+                &ssh_mlkem_curve25519_hybrid_kex;
+            break;
+          case KEX_MLKEM_NIST_HYBRID:
+            preferred_kex[n_preferred_kex++] =
+                &ssh_mlkem_nist_hybrid_kex;
             break;
           case KEX_WARN:
             /* Flag for later. Don't bother if it's the last in
@@ -1166,7 +1172,7 @@ static ScanKexinitsResult ssh2_scan_kexinits(
              * Otherwise, any match failure _is_ a fatal error.
              */
             ScanKexinitsResult skr = {
-                .success = false, .error = SKR_UNKNOWN_ID,
+                .success = false, .error = SKR_NO_AGREEMENT,
                 .kind = kexlist_descr[i], .desc = slists[i],
             };
             return skr;

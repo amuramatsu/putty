@@ -149,7 +149,7 @@ struct ssh_sharing_state {
     char *server_verstring;          /* server version string after "SSH-" */
 
     Plug plug;
-    Conf *conf;
+    bool ask;
 };
 
 struct share_globreq;
@@ -1743,7 +1743,7 @@ static void share_got_pkt_from_downstream(struct ssh_sharing_connstate *cs,
 #define crGetChar(c) do                                         \
     {                                                           \
         while (len == 0) {                                      \
-            *crLine =__LINE__; return; case __LINE__:;          \
+            *crLine = __LINE__; return; case __LINE__:;         \
         }                                                       \
         len--;                                                  \
         (c) = (unsigned char)*data++;                           \
@@ -1910,10 +1910,9 @@ static int share_listen_accepting(Plug *plug,
         plug, struct ssh_sharing_state, plug);
     struct ssh_sharing_connstate *cs;
     const char *err;
-    SocketPeerInfo *peerinfo;
+    SocketEndpointInfo *peerinfo;
 
-    if (conf_get_bool(sharestate->conf, CONF_ssh_connection_sharing_ask) &&
-        !platform_ssh_share_ask(sharestate->sockname)) {
+    if (sharestate->ask && !platform_ssh_share_ask(sharestate->sockname)) {
         return 1;
     }
 
@@ -1962,7 +1961,7 @@ static int share_listen_accepting(Plug *plug,
     log_downstream(cs, "connected%s%s",
                    (peerinfo && peerinfo->log_text ? " from " : ""),
                    (peerinfo && peerinfo->log_text ? peerinfo->log_text : ""));
-    sk_free_peer_info(peerinfo);
+    sk_free_endpoint_info(peerinfo);
 
     return 0;
 }
@@ -2095,7 +2094,7 @@ Socket *ssh_connection_sharing_init(
     sharestate = snew(struct ssh_sharing_state);
     sharestate->plug.vt = &ssh_sharing_listen_plugvt;
     sharestate->listensock = NULL;
-    sharestate->conf = conf;
+    sharestate->ask = conf_get_bool(conf, CONF_ssh_connection_sharing_ask);
     sharestate->cl = NULL;
 
     /*

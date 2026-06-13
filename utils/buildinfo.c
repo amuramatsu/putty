@@ -44,6 +44,14 @@ char *buildinfo(const char *newline)
      * cases, two different compiler versions have the same _MSC_VER
      * value, and have to be distinguished by _MSC_FULL_VER.
      */
+#elif _MSC_VER == 1944
+    put_fmt(buf, " 2022 (17.14)");
+#elif _MSC_VER == 1943
+    put_fmt(buf, " 2022 (17.13)");
+#elif _MSC_VER == 1942
+    put_fmt(buf, " 2022 (17.12)");
+#elif _MSC_VER == 1941
+    put_fmt(buf, " 2022 (17.11)");
 #elif _MSC_VER == 1940
     put_fmt(buf, " 2022 (17.10)");
 #elif _MSC_VER == 1939
@@ -173,6 +181,9 @@ char *buildinfo(const char *newline)
 #endif
 
     put_fmt(buf, "%sSource commit: %s", newline, commitid);
+
+    put_fmt(buf, "%s" "Notice: This build is a modified version of the original software.", newline);
+    put_fmt(buf, "%s" "  It is not affiliated with the original developers.", newline);
 
     return strbuf_to_str(buf);
 }

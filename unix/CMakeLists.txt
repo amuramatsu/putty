@@ -4,6 +4,7 @@ add_sources_from_current_dir(utils
   utils/arm_arch_queries.c
   utils/block_signal.c
   utils/cloexec.c
+  utils/cmdline_arg.c
   utils/dputs.c
   utils/filename.c
   utils/fontspec.c
@@ -19,6 +20,7 @@ add_sources_from_current_dir(utils
   utils/pollwrap.c
   utils/signal.c
   utils/sleep_ticks.c
+  utils/subprocess_waiter.c
   utils/x11_ignore_error.c
   # We want the ISO C implementation of ltime(), because we don't have
   # a local better alternative
@@ -26,10 +28,14 @@ add_sources_from_current_dir(utils
 # Compiled icon pixmap files
 add_library(puttyxpms STATIC
   putty-xpm.c
-  putty-config-xpm.c)
+  putty-rgb.c
+  putty-config-xpm.c
+  putty-config-rgb.c)
 add_library(ptermxpms STATIC
   pterm-xpm.c
-  pterm-config-xpm.c)
+  pterm-rgb.c
+  pterm-config-xpm.c
+  pterm-config-rgb.c)
 add_sources_from_current_dir(eventloop
   cliloop.c uxsel.c)
 add_sources_from_current_dir(console
@@ -53,10 +59,10 @@ add_sources_from_current_dir(agent
 
 add_executable(fuzzterm
   ${CMAKE_SOURCE_DIR}/test/fuzzterm.c
-  ${CMAKE_SOURCE_DIR}/logging.c
   ${CMAKE_SOURCE_DIR}/stubs/no-print.c
   unicode.c
-  no-gtk.c)
+  no-gtk.c
+  $<TARGET_OBJECTS:logging>)
 be_list(fuzzterm FuZZterm)
 add_dependencies(fuzzterm generated_licence_h)
 target_link_libraries(fuzzterm
@@ -65,15 +71,16 @@ target_link_libraries(fuzzterm
 add_executable(osxlaunch
   osxlaunch.c)
 
-add_sources_from_current_dir(plink no-gtk.c)
-add_sources_from_current_dir(pscp no-gtk.c)
-add_sources_from_current_dir(psftp no-gtk.c)
+add_sources_from_current_dir(plink unicode.c no-gtk.c)
+add_sources_from_current_dir(pscp unicode.c no-gtk.c)
+add_sources_from_current_dir(psftp unicode.c no-gtk.c)
 add_sources_from_current_dir(psocks no-gtk.c)
 
 add_executable(psusan
   psusan.c
   ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
   ${CMAKE_SOURCE_DIR}/ssh/scpserver.c
+  unicode.c
   no-gtk.c
   pty.c)
 be_list(psusan psusan)
@@ -121,6 +128,7 @@ add_executable(uppity
   ${CMAKE_SOURCE_DIR}/ssh/scpserver.c
   no-gtk.c
   pty.c
+  unicode.c
   ${CMAKE_SOURCE_DIR}/stubs/no-gss.c)
 be_list(uppity Uppity)
 target_link_libraries(uppity
@@ -145,12 +153,14 @@ if(GTK_FOUND)
     main-gtk-simple.c
     ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
     ${CMAKE_SOURCE_DIR}/stubs/no-ca-config.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-console.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-dit.c
     ${CMAKE_SOURCE_DIR}/proxy/nosshproxy.c
     pty.c)
   be_list(pterm pterm)
   target_link_libraries(pterm
-    guiterminal eventloop settings charset utils ptermxpms
-    ${GTK_LIBRARIES} ${X11_LIBRARIES})
+    guiterminal eventloop settings utils ptermxpms
+    ${GTK_LIBRARIES} ${X11_LIBRARIES} ${X11_Xrender_LIB})
   installed_program(pterm)
 
   if(GTK_VERSION GREATER_EQUAL 3)
@@ -160,22 +170,25 @@ if(GTK_FOUND)
       ${CMAKE_SOURCE_DIR}/stubs/no-cmdline.c
       ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
       ${CMAKE_SOURCE_DIR}/stubs/no-ca-config.c
+      ${CMAKE_SOURCE_DIR}/stubs/no-console.c
+      ${CMAKE_SOURCE_DIR}/stubs/no-dit.c
       ${CMAKE_SOURCE_DIR}/proxy/nosshproxy.c
       pty.c)
     be_list(ptermapp pterm)
     target_link_libraries(ptermapp
-      guiterminal eventloop settings charset utils ptermxpms
-      ${GTK_LIBRARIES} ${X11_LIBRARIES})
+      guiterminal eventloop settings utils ptermxpms
+      ${GTK_LIBRARIES} ${X11_LIBRARIES} ${X11_Xrender_LIB})
   endif()
 
   add_executable(putty
     putty.c
-    main-gtk-simple.c)
+    main-gtk-simple.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-console.c)
   be_list(putty PuTTY SSH SERIAL OTHERBACKENDS)
   target_link_libraries(putty
     guiterminal eventloop sshclient otherbackends settings
-    network crypto charset utils puttyxpms
-    ${GTK_LIBRARIES} ${X11_LIBRARIES})
+    network crypto utils puttyxpms
+    ${GTK_LIBRARIES} ${X11_LIBRARIES} ${X11_Xrender_LIB})
   set_target_properties(putty
     PROPERTIES LINK_INTERFACE_MULTIPLICITY 2)
   installed_program(putty)
@@ -184,12 +197,13 @@ if(GTK_FOUND)
     add_executable(puttyapp
       putty.c
       main-gtk-application.c
-      ${CMAKE_SOURCE_DIR}/stubs/no-cmdline.c)
+      ${CMAKE_SOURCE_DIR}/stubs/no-cmdline.c
+      ${CMAKE_SOURCE_DIR}/stubs/no-console.c)
     be_list(puttyapp PuTTY SSH SERIAL OTHERBACKENDS)
     target_link_libraries(puttyapp
       guiterminal eventloop sshclient otherbackends settings
-      network crypto charset utils puttyxpms
-      ${GTK_LIBRARIES} ${X11_LIBRARIES})
+      network crypto utils puttyxpms
+      ${GTK_LIBRARIES} ${X11_LIBRARIES} ${X11_Xrender_LIB})
   endif()
 
   add_executable(puttytel
@@ -197,14 +211,34 @@ if(GTK_FOUND)
     main-gtk-simple.c
     ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
     ${CMAKE_SOURCE_DIR}/stubs/no-ca-config.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-console.c
     ${CMAKE_SOURCE_DIR}/stubs/no-rand.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-dit.c
     ${CMAKE_SOURCE_DIR}/proxy/nocproxy.c
     ${CMAKE_SOURCE_DIR}/proxy/nosshproxy.c)
   be_list(puttytel PuTTYtel SERIAL OTHERBACKENDS)
   target_link_libraries(puttytel
-    guiterminal eventloop otherbackends settings network charset utils
+    guiterminal eventloop otherbackends settings network utils
     puttyxpms
-    ${GTK_LIBRARIES} ${X11_LIBRARIES})
+    ${GTK_LIBRARIES} ${X11_LIBRARIES} ${X11_Xrender_LIB})
+
+  add_executable(test_lineedit
+    ${CMAKE_SOURCE_DIR}/test/test_lineedit.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-logging.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-printing.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-timing.c)
+  target_link_libraries(test_lineedit
+    guiterminal settings eventloop utils ${platform_libraries})
+
+  add_executable(test_terminal
+    ${CMAKE_SOURCE_DIR}/test/test_terminal.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
+    ${CMAKE_SOURCE_DIR}/stubs/no-timing.c)
+  target_link_libraries(test_terminal
+    guiterminal settings eventloop utils ${platform_libraries})
 endif()
 
 # Pageant is built whether we have GTK or not; in its absence we
@@ -229,3 +263,5 @@ target_link_libraries(pageant
   eventloop console agent settings network crypto utils
   ${pageant_libs})
 installed_program(pageant)
+
+add_sources_from_current_dir(test_conf unicode.c stubs/no-uxsel.c)
