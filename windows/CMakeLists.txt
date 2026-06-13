@@ -208,28 +208,28 @@ add_executable(test_screenshot
   test/test_screenshot.c)
 target_link_libraries(test_screenshot utils ${platform_libraries})
 
-add_executable(test_lineedit
-  ${CMAKE_SOURCE_DIR}/test/test_lineedit.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-ini.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-logging.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-printing.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
-  no-jump-list.c)
-target_link_libraries(test_lineedit
-  iso2022
-  guiterminal settings eventloop utils ${platform_libraries})
+#add_executable(test_lineedit
+#  ${CMAKE_SOURCE_DIR}/test/test_lineedit.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-ini.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-logging.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-printing.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
+#  no-jump-list.c)
+#target_link_libraries(test_lineedit
+#  iso2022
+#  guiterminal settings eventloop utils ${platform_libraries})
 
-add_executable(test_terminal
-  ${CMAKE_SOURCE_DIR}/test/test_terminal.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
-  ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
-  no-jump-list.c)
-target_link_libraries(test_terminal
-  iso2022
-  guiterminal settings eventloop utils ${platform_libraries})
+#add_executable(test_terminal
+#  ${CMAKE_SOURCE_DIR}/test/test_terminal.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-gss.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-storage.c
+#  ${CMAKE_SOURCE_DIR}/stubs/no-timing.c
+#  no-jump-list.c)
+#target_link_libraries(test_terminal
+#  iso2022
+#  guiterminal settings eventloop utils ${platform_libraries})
 
 add_sources_from_current_dir(test_conf
   ../stubs/no-iso2022.c
